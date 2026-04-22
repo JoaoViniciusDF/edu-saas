@@ -1,0 +1,1176 @@
+================================================================================
+ROADMAP BACKEND — EduSaaS (MVP)
+================================================================================
+Documento: contrato de API, DTOs (Pydantic), regras de negócio e modelo de dados
+Linguagem alvo: Python (FastAPI recomendado)
+Persistência: PostgreSQL (JSONB onde indicado)
+Versão do roadmap: 1.0
+Data de referência: 2026-04-22
+
+Fontes de escopo (frontend e especificação):
+- frontend/lib/avaliacoes/dados.ts
+- frontend/componentes/modulos/avaliacoes-provedor.tsx
+- frontend/componentes/modulos/modulo-avaliacoes.tsx
+- frontend/componentes/modulos/modulo-conteudo.tsx
+- frontend/componentes/modulos/modulo-comunicados.tsx
+- frontend/componentes/modulos/modulo-dashboard.tsx
+- frontend/componentes/layout/cabecalho.tsx
+- frontend/docs/especificacao-de-requisitos.txt
+
+Observação: a UI atual usa dados mock em memória. Este documento define o backend
+necessário para persistência, RBAC, busca, notificações e fluxos de aluno.
+
+================================================================================
+1. VISÃO, STACK E CONVENÇÕES DA API
+================================================================================
+
+1.1 Stack sugerida
+- Runtime: Python 3.12+
+- Framework HTTP: FastAPI
+- ORM: SQLAlchemy 2.x ou equivalente
+- Validação: Pydantic v2
+- Auth: JWT (access + refresh), hash de senha (argon2/bcrypt)
+- DB: PostgreSQL 16+
+- Objeto/Blob: S3-compatível ou Azure Blob (URLs assinadas)
+- Filas/worker: Celery + Redis, RQ, ou arq (jobs IA e correção)
+- Opcional: WebSocket ou SSE para chat do assistente (baixa latência)
+
+1.2 Multi-tenant
+- Raiz lógica: instituicao_id (UUID) em todas as entidades de negócio.
+- Toda query de leitura/escrita deve filtrar por instituicao_id derivado do
+  usuário autenticado (exceto tabelas globais de sistema, se existirem).
+- Não retornar dados de outra instituição mesmo com ID válido (teste de IDOR).
+
+1.3 Prefixo e versão
+- Base URL: /api/v1
+- Exemplo: POST /api/v1/auth/login
+
+1.4 Autenticação
+- Header: Authorization: Bearer <access_token>
+- Access token: curta duração (ex.: 15–30 min).
+- Refresh token: rotação em cookie HttpOnly ou body (definir política CSRF se cookie).
+
+1.5 Identificadores e tempo
+- IDs públicos: UUID string no JSON (ex.: "9f422730-261f-4196-8f2a-e807d5f6bb20").
+- Timestamps no banco: timestamptz, sempre armazenados em UTC.
+- Campos sugeridos: criado_em, atualizado_em, publicado_em, encerrada_em, lido_em.
+
+1.6 Formato de erro (envelope JSON)
+{
+  "code": "STRING_MACHINE_READABLE",
+  "message": "Mensagem legível",
+  "details": { "campo": ["erro de validação"], ... }   // opcional
+}
+HTTP: usar 400 (validação), 401 (não autenticado), 403 (proibido), 404, 409
+(conflito, ex.: unicidade submissão), 422 (FastAPI validation), 500.
+
+1.7 Paginação e cursores
+- Listas longas: cursor opcional (opaque) ou page + page_size (max 100).
+- Resposta paginada:
+{
+  "items": [ ... ],
+  "next_cursor": "string|null",
+  "has_more": boolean
+}
+
+1.8 CORS e upload
+- CORS restrito aos domínios do frontend em produção.
+- Upload direto ao blob storage via presign; backend valida MIME, tamanho, tenant.
+
+================================================================================
+2. PERFIS RBAC E MATRIZ DE AUTORIZAÇÃO
+================================================================================
+
+2.1 Perfis (tipo_perfil em usuario_conta)
+- professor: administrador pedagógico no escopo das turmas/instituição vinculadas.
+- aluno: consome materiais autorizados; responde avaliações publicadas no prazo.
+- responsavel: leitura de dados dos dependentes (dashboard, relatórios, comunicados).
+
+2.2 Regras gerais (RF-002)
+- Aluno e responsável: sem mutação de matérias, questões, comunicados institucionais,
+  publicação de avaliações, etc.
+- Exceções de escrita para aluno: criar/atualizar/enviar PRÓPRIA submissão; marcar leitura
+  de comunicado quando aplicável.
+- Professor: CRUD pedagógico completo no seu escopo.
+
+2.3 Matriz resumida (endpoint → perfis)
+Legenda: P=professor, A=aluno, R=responsavel
+
+/auth/login, /auth/refresh, /auth/logout, /auth/me, /users/me/preferences → P,A,R
+/instituicoes/{id} → P,A,R (somente leitura do próprio contexto)
+/turmas*, /alunos*, matrículas (leitura para montar destinatários) → P (gestão); A/R conforme escopo
+/search → P (federado docente); A/R versão restrita (opcional MVP: só P)
+/notificacoes* → P,A,R (cada um vê as suas)
+/avaliacoes/materias*, assuntos*, pastas*, avaliacoes*, questoes*, chat* → P
+/aluno/avaliacoes*, /aluno/submissoes* → A
+/conteudo/* (CRUD materiais/pastas) → P; GET materiais autorizados → A (e R se política permitir leitura)
+/comunicados* (criar/editar/publicar) → P; GET inbox → P,A,R escopado
+/dashboard/resumo → P; R (visão tutelados); A omitido ou futuro “meu desempenho”
+/submissoes/{id}/relatorio-ia → P, R (dependente), A (próprio)
+
+================================================================================
+3. SERVIÇOS (ENDPOINTS REST) — ESPECIFICAÇÃO COMPLETA
+================================================================================
+
+Convenção: todos os paths abaixo são relativos a /api/v1
+
+--------------------------------------------------------------------------------
+3.1 AUTENTICAÇÃO E SESSÃO
+--------------------------------------------------------------------------------
+
+POST /auth/login
+  Perfis: público
+  Body (LoginRequest):
+    email: str (formato email, obrigatório)
+    senha: str (obrigatório)
+  Response 200 (LoginResponse):
+    access_token: str
+    refresh_token: str
+    token_type: "bearer"
+    expira_em: str (ISO 8601 UTC do access)
+    usuario: UserMe
+  Erros: 401 credenciais inválidas; 403 conta desativada
+  RN: incrementar contador de falhas; bloqueio opcional após N tentativas.
+
+POST /auth/refresh
+  Body:
+    refresh_token: str
+  Response 200: mesmo contrato de tokens + UserMe resumido (opcional)
+  Erros: 401 refresh inválido/expirado
+
+POST /auth/logout
+  Perfis: autenticado
+  Body opcional: refresh_token (para revogar)
+  Response 204
+  RN: invalidar refresh (tabela blacklist ou revogar sessão).
+
+GET /auth/me
+  Perfis: autenticado
+  Response 200: UserMe
+
+PATCH /users/me/preferences
+  Perfis: autenticado
+  Body (UserPreferencesPatch):
+    tema: "light"|"dark"|"system"|null (opcional)
+    idioma: str|null (ex.: "pt-BR", opcional)
+    densidade_ui: "comfortable"|"compact"|null (opcional, futuro)
+  Response 200: UserMe (preferencias atualizadas)
+  RN: merge parcial; não alterar email/senha aqui.
+
+--------------------------------------------------------------------------------
+3.2 INSTITUIÇÃO E CADASTROS BASE
+--------------------------------------------------------------------------------
+
+GET /instituicoes/{instituicao_id}
+  Perfis: autenticado (somente se instituicao_id == do token)
+  Response 200 (InstituicaoResponse):
+    id, nome_fantasia, documento_legal (opcional), configuracoes (objeto opcional)
+
+GET /turmas
+  Query: cursor, nome (filtro opcional)
+  Perfis: P (todas as turmas do escopo); A/R (turma(s) vinculadas)
+  Response: Paginated<TurmaListItem>
+    TurmaListItem: id, nome, ano_letivo, turno (opcional), professor_titular_nome (opcional)
+
+GET /turmas/{turma_id}
+  Perfis: escopo
+  Response 200: TurmaDetail (TurmaListItem + contagem_alunos opcional)
+
+GET /turmas/{turma_id}/alunos
+  Perfis: P (da turma); R (se turma contém dependente)
+  Response: lista de AlunoListItem: id, nome_exibicao, usuario_id (opcional)
+
+GET /alunos/{aluno_id}
+  Perfis: P; R (se dependente); A (se próprio)
+  Response: AlunoDetail
+
+GET /alunos/{aluno_id}/responsaveis
+  Perfis: P; A (próprio)
+  Response: lista ResponsavelListItem
+
+Notas MVP:
+- CRUD de turmas/alunos pode ser seed/admin fora do escopo UI atual; expor leitura mínima
+  para destinatários de comunicados e dashboard.
+
+--------------------------------------------------------------------------------
+3.3 BUSCA FEDERADA (CABEÇALHO)
+--------------------------------------------------------------------------------
+
+GET /search
+  Query:
+    q: str (obrigatório, min 2 caracteres)
+    types: str opcional, CSV: aluno,material,avaliacao,comunicado (default: todos permitidos ao perfil)
+    limit: int (default 20, max 50)
+  Perfis: P (completo no escopo); A/R versão restrita (opcional: só materiais + comunicados)
+  Response 200 (SearchResponse):
+    grupos: [
+      { "tipo": "aluno", "itens": [ SearchHit, ... ] },
+      ...
+    ]
+  SearchHit:
+    id: str
+    tipo: str
+    titulo: str
+    subtitulo: str|null
+    url_deep_link: str (path frontend sugerido, ex.: /avaliacoes/{mat}/{pasta}/{av})
+  RN: respeitar instituicao_id; não vazar rascunhos de avaliação para aluno; comunicados só
+  se usuário é destinatário efetivo.
+
+--------------------------------------------------------------------------------
+3.4 NOTIFICAÇÕES (CABEÇALHO)
+--------------------------------------------------------------------------------
+
+GET /notificacoes
+  Query: lida: bool|null, cursor
+  Perfis: autenticado
+  Response: Paginated<NotificacaoItem>
+  NotificacaoItem:
+    id, titulo, corpo_curto, tipo_evento, lida: bool, criado_em, link_profundo (opcional)
+
+PATCH /notificacoes/{notificacao_id}/lida
+  Body: { "lida": true }
+  Perfis: dono da notificação
+  Response 200: NotificacaoItem
+
+POST /notificacoes/marcar-todas-lidas
+  Perfis: autenticado
+  Response 200: { "atualizadas": int }
+
+Eventos que geram Notificacao (exemplos):
+- comunicado publicado destinado ao usuário
+- relatorio_ia disponível para submissão do dependente (responsavel)
+- avaliação publicada na turma do aluno (opcional)
+
+--------------------------------------------------------------------------------
+3.5 MÓDULO AVALIAÇÕES (HIERARQUIA: MATÉRIA → ASSUNTO → PASTA → AVALIAÇÃO → QUESTÃO)
+--------------------------------------------------------------------------------
+
+--- Matérias ---
+
+GET /avaliacoes/materias
+  Perfis: P
+  Response 200: lista MateriaResponse
+  MateriaResponse:
+    id: UUID
+    nome: str
+    cor: str (token Tailwind ou código hex — compatível com UI)
+    conteudos_count: int (derivado: número de pastas de avaliação ou conteúdos)
+    assuntos_count: int (opcional)
+
+POST /avaliacoes/materias
+  Perfis: P
+  Body (MateriaCreateRequest):
+    nome: str
+    cor: str|null (se null, servidor sorteia ou aplica padrão)
+  Response 201: MateriaResponse
+  RN: criar automaticamente um Assunto inicial com nome "Geral" e ordem 0
+    (espelha avaliacoes-provedor.tsx).
+
+PATCH /avaliacoes/materias/{materia_id}
+  Body (MateriaPatchRequest): nome (opcional), cor (opcional), ordem (opcional int)
+  Response 200: MateriaResponse
+
+DELETE /avaliacoes/materias/{materia_id}
+  Perfis: P
+  Response 204 ou 409 se existir submissão em qualquer avaliação filha (política recomendada:
+  bloquear exclusão se houver submissao; alternativa: soft-delete)
+
+GET /avaliacoes/materias/{materia_id}/arvore
+  Perfis: P
+  Response 200 (MateriaArvoreResponse):
+    materia: MateriaResponse
+    assuntos: [
+      {
+        id, nome, ordem,
+        pastas: [ PastaAvaliacoesResumo, ... ]
+      }
+    ]
+  PastaAvaliacoesResumo:
+    id, nome,
+    alunos_responderam, alunos_total,
+    avaliacoes_concluidas, avaliacoes_total,
+    status_resumo: str (texto derivado para UI)
+
+--- Assuntos ---
+
+POST /avaliacoes/materias/{materia_id}/assuntos
+  Body: { "nome": str, "ordem": int|null }
+  Response 201: AssuntoResponse (id, materia_id, nome, ordem)
+
+PATCH /avaliacoes/assuntos/{assunto_id}
+  Body: nome (opcional), ordem (opcional)
+  Response 200: AssuntoResponse
+
+DELETE /avaliacoes/assuntos/{assunto_id}
+  Response 204 ou 409 (mesma política de submissões)
+
+--- Pastas de avaliações (equivalente ConteudoAvaliacao na UI) ---
+
+POST /avaliacoes/assuntos/{assunto_id}/pastas
+  Body (PastaAvaliacoesCreateRequest):
+    nome: str|null — se vazio, default "Nova pasta de avaliações"
+  Response 201: PastaAvaliacoesDetail
+  PastaAvaliacoesDetail:
+    id, assunto_id, nome,
+    alunos_responderam, alunos_total,
+    avaliacoes_concluidas, avaliacoes_total,
+    status_resumo: str
+
+GET /avaliacoes/pastas/{pasta_id}
+  Perfis: P
+  Response 200: PastaAvaliacoesDetail
+  RN: campos agregados são SEMPRE derivados de submissões e estados das avaliações,
+    nunca aceitos como input de escrita.
+
+PATCH /avaliacoes/pastas/{pasta_id}
+  Body: { "nome": str }
+  Response 200: PastaAvaliacoesDetail
+
+--- Avaliações ---
+
+GET /avaliacoes/pastas/{pasta_id}/avaliacoes
+  Perfis: P
+  Response 200: lista AvaliacaoListItemResponse
+  AvaliacaoListItemResponse (espelha AvaliacaoListaItem):
+    id, titulo, status: "rascunho"|"publicada"|"encerrada",
+    alunos_feitos: int, alunos_total: int
+
+POST /avaliacoes/pastas/{pasta_id}/avaliacoes
+  Body opcional: { "titulo": str|null } — default "Nova avaliação"
+  Response 201: AvaliacaoDetailResponse (rascunho, sem questões ou vazio)
+
+GET /avaliacoes/avaliacoes/{avaliacao_id}
+  Perfis: P (sempre); A via rota /aluno/... (sem gabarito)
+  Response 200: AvaliacaoDetailResponse
+  AvaliacaoDetailResponse:
+    id, pasta_id, titulo, status,
+    publicado_em: datetime|null, encerrada_em: datetime|null,
+    prazo_utc: datetime|null,
+    questoes: [ QuestaoResponse, ... ],
+    payload_editor_jsonb: object|null (snapshot do editor, opcional),
+    pode_editar: bool (derivado: status == rascunho)
+
+PATCH /avaliacoes/avaliacoes/{avaliacao_id}
+  Perfis: P
+  Body (AvaliacaoPatchRequest):
+    titulo: str|null (opcional)
+    prazo_utc: datetime|null (opcional)
+  RN: não permitir mudança de status por este PATCH; usar ações dedicadas.
+  Erros: 403 se status != rascunho para campos sensíveis (ou permitir só prazo em publicada
+    conforme política; MVP recomendado: só rascunho edita título/prazo de edição)
+
+POST /avaliacoes/avaliacoes/{avaliacao_id}/salvar-rascunho
+  Perfis: P
+  Body (AvaliacaoSalvarRascunhoRequest):
+    titulo: str|null (opcional)
+    prazo_utc: datetime|null (opcional)
+    questoes: [ QuestaoUpsert, ... ]  // ver DTOs seção 4
+    payload_editor: object|null (opcional, JSON serializável)
+  Response 200: AvaliacaoDetailResponse
+  RN: idempotente por versão opcional (If-Match / versao int); RF-007 auto-save debounce.
+  Erros: 403 se não rascunho.
+
+POST /avaliacoes/avaliacoes/{avaliacao_id}/publicar
+  Perfis: P
+  Body opcional: { "prazo_utc": datetime|null }
+  RN:
+    - status atual deve ser rascunho
+    - deve haver pelo menos 1 questão válida
+    - toda múltipla escolha deve ter alternativas >= 2 e resposta_correta no intervalo
+  Response 200: AvaliacaoDetailResponse (status publicada, publicado_em preenchido)
+  Erros: 409 se já publicada/encerrada
+
+POST /avaliacoes/avaliacoes/{avaliacao_id}/encerrar
+  Perfis: P
+  RN: transição publicada → encerrada; irreversível MVP; rejeitar novas submissões/alterações
+  Response 200: AvaliacaoDetailResponse
+  Erros: 409 se rascunho ou já encerrada
+
+--- Questões (alternativa granular além do salvar-rascunho bulk) ---
+
+PUT /avaliacoes/avaliacoes/{avaliacao_id}/questoes
+  Body: { "questoes": [ QuestaoUpsert, ... ] } — substitui ordem e conteúdo completo
+  Perfis: P, apenas rascunho
+  Response 200: lista QuestaoResponse
+
+POST /avaliacoes/avaliacoes/{avaliacao_id}/questoes
+  Body: QuestaoUpsert (sem id cria novo)
+  Response 201: QuestaoResponse
+
+PATCH /avaliacoes/avaliacoes/{avaliacao_id}/questoes/{questao_id}
+  Body: parcial QuestaoUpsert
+  Response 200: QuestaoResponse
+
+DELETE /avaliacoes/avaliacoes/{avaliacao_id}/questoes/{questao_id}
+  Response 204
+
+POST /avaliacoes/avaliacoes/{avaliacao_id}/questoes/reordenar
+  Body: { "ordem_ids": [ UUID, ... ] }
+  Response 200: lista QuestaoResponse
+
+--- Assistente IA (sidecar) ---
+
+POST /avaliacoes/avaliacoes/{avaliacao_id}/chat
+  Perfis: P
+  Body (AvaliacaoChatMessageRequest):
+    mensagem: str
+    cliente_msg_id: str|null (idempotência opcional)
+  Response 200 (sync) ou 202 (async):
+    modo sync: { "resposta": str, "mensagem_id": UUID }
+    modo async: { "job_id": UUID, "status": "queued" }
+  RN: só professor; avaliação em rascunho recomendado para aplicar mudanças; log de auditoria
+    opcional para compliance IA.
+
+GET /avaliacoes/avaliacoes/{avaliacao_id}/chat
+  Query: cursor
+  Response: Paginated<AvaliacaoChatMensagem>
+  AvaliacaoChatMensagem: id, papel: "usuario"|"assistente", conteudo, criado_em
+
+--- Fluxo ALUNO (avaliação) ---
+
+GET /aluno/avaliacoes/disponiveis
+  Perfis: A
+  Response: lista de itens com id, titulo, pasta_nome, materia_nome, prazo_utc, status_efetivo
+
+GET /aluno/avaliacoes/{avaliacao_id}
+  Perfis: A
+  Response: AvaliacaoAlunoView (enunciados + alternativas SEM indicar gabarito; texto aberto)
+  Erros: 404 se rascunho ou fora do escopo; 403 se encerrada/prazo expirado para NOVA tentativa
+    (ainda permitir GET se já existe submissão — política a definir)
+
+POST /aluno/avaliacoes/{avaliacao_id}/submissoes
+  Perfis: A
+  Response 201: SubmissaoResponse (id, status: "rascunho", iniciada_em)
+  RN: avaliacao publicada; dentro do prazo; no máximo uma submissão por (avaliacao, aluno);
+    se já existe, retornar 409 com id existente ou reutilizar política idempotente.
+
+PATCH /aluno/submissoes/{submissao_id}
+  Body: { "respostas": [ RespostaQuestaoInput, ... ] }  // parcial
+  RN: só dono; avaliacao ainda aceita edição (não enviada; prazo válido; não encerrada)
+  Response 200: SubmissaoResponse
+
+POST /aluno/submissoes/{submissao_id}/enviar
+  Body opcional: comentario_final str
+  RN:
+    - valida prazo UTC no servidor (RF-009)
+    - status avaliacao encerrada ou prazo ultrapassado → 403
+    - calcula nota objetiva para MCQ; texto aberto: pontos nulos ou 0 até correção manual
+    - enfileira job Relatorio_IA (RF-014)
+  Response 200: SubmissaoResponse (status: "enviada", nota_decimal, enviada_em)
+
+--------------------------------------------------------------------------------
+3.6 MÓDULO CONTEÚDO (PASTAS POR DISCIPLINA)
+--------------------------------------------------------------------------------
+
+GET /conteudo/pastas
+  Perfis: P (CRUD); A leitura das pastas visíveis (escopo turma/instituição)
+  Response: lista PastaConteudoResponse:
+    id, nome_disciplina, cor_token_ui, icone (opcional), quantidade_materiais, ultima_atualizacao
+
+POST /conteudo/pastas
+  Body: nome_disciplina, cor_token_ui, icone (opcional), ordem (opcional)
+  Response 201: PastaConteudoResponse
+
+PATCH /conteudo/pastas/{pasta_id}, DELETE /conteudo/pastas/{pasta_id}
+  Perfis: P
+
+GET /conteudo/pastas/{pasta_id}/materiais
+  Query: tipo: pdf|audio|imagem|video|nota|null, cursor
+  Response: Paginated<MaterialEstudoResponse>
+
+POST /conteudo/pastas/{pasta_id}/materiais
+  Perfis: P
+  Body (multipart OU JSON):
+    - JSON: titulo, descricao, tipo_anexo, corpo_texto (opcional), url_objeto (após presign),
+      metadados_duracao_texto (opcional), ordem_exibicao (opcional)
+  Response 201: MaterialEstudoResponse
+
+GET /conteudo/materiais/{material_id}
+  Perfis: P,A (se autorizado)
+  Response 200: MaterialEstudoResponse (inclui URLs assinadas temporárias se blob privado)
+
+PATCH /conteudo/materiais/{material_id}, DELETE /conteudo/materiais/{material_id}
+  Perfis: P
+
+POST /uploads/presign
+  Body:
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    contexto: "comunicado"|"conteudo"|"comunicado_imagem"|...
+  Response 200:
+    upload_url: str
+    campos_adicionais: object (S3 POST policy)
+    blob_id: UUID (registro metadados pendente)
+  RN: limites de tamanho por MIME; whitelist de tipos.
+
+--------------------------------------------------------------------------------
+3.7 COMUNICADOS
+--------------------------------------------------------------------------------
+
+GET /comunicados
+  Query: status: rascunho|publicado|null (para autor: rascunhos próprios), cursor
+  Perfis: P,A,R — inbox filtrada por destinatário efetivo + comunicados criados pelo professor
+  Response: Paginated<ComunicadoInboxItem>
+  ComunicadoInboxItem:
+    id, titulo, preview, data_hora, lido: bool, status, autor_nome
+
+GET /comunicados/{comunicado_id}
+  Perfis: escopo
+  Response 200: ComunicadoDetailResponse
+  RN (RF-011): ao abrir (GET), registrar comunicado_leitura para o usuario_id se ainda não lido
+    (alternativa: endpoint explícito POST /comunicados/{id}/marcar-lido)
+
+POST /comunicados/{comunicado_id}/marcar-lido
+  Response 204
+
+POST /comunicados
+  Perfis: P
+  Body (ComunicadoCreateRequest):
+    titulo: str
+    corpo: str
+    imagens_urls: [ str, ... ]  // URLs já enviadas via presign
+    destinatarios: [ DestinatarioRef, ... ]
+    status_inicial: "rascunho"|"publicado"
+  DestinatarioRef:
+    tipo: "aluno"|"turma"|"responsavel"
+    id: UUID (id da entidade de negócio, não necessariamente usuario_id)
+  RN (RF-010): expandir turma → alunos/responsáveis conforme tipo de público do comunicado;
+    usuários fora do escopo da instituição/turma não recebem linhas de destino.
+  Response 201: ComunicadoDetailResponse
+
+PATCH /comunicados/{comunicado_id}
+  Perfis: P, apenas se rascunho ou política permitir edição
+  Body: parcial ComunicadoCreateRequest
+
+POST /comunicados/{comunicado_id}/publicar
+  Perfis: P
+  RN: destinatários resolvidos; gera notificações
+
+--------------------------------------------------------------------------------
+3.8 DASHBOARD (OBSERVABILIDADE)
+--------------------------------------------------------------------------------
+
+GET /dashboard/resumo
+  Query:
+    escopo: geral|turma|aluno
+    turma_id: UUID (obrigatório se escopo=turma)
+    aluno_id: UUID (obrigatório se escopo=aluno)
+    data_inicio: date (ISO)
+    data_fim: date (ISO)
+  Perfis: P (turmas sob gestão); R (alunos dependentes)
+  Response 200 (DashboardResumoResponse):
+    filtros_aplicados: object
+    cartoes:
+      total_alunos: int
+      media_geral: float
+      pendencias_correcao: int  // submissões com questões abertas sem nota final
+      taxa_aprovacao: float     // percentual 0–100, regra institucional (ex.: nota >= 6)
+    serie_temporal: [
+      { periodo: str, media: float, por_turma: { turma_id: float, ... } opcional }
+    ]
+    disciplinas: [
+      { disciplina_id, disciplina_nome, nota_media: float, meta: float }
+    ]
+    insights: [
+      { tipo: str, titulo: str, descricao: str, severidade: "info"|"warning"|"success" }
+    ]
+  RN: dados agregados a partir de fatos (submissao, notas por disciplina); não usar colunas
+    fixas "matematica/portugues" no banco — usar disciplina_id dinâmico; views podem pivotar
+    para compatibilidade com gráficos atuais.
+
+--------------------------------------------------------------------------------
+3.9 RELATÓRIOS IA (PÓS-SUBMISSÃO)
+--------------------------------------------------------------------------------
+
+GET /submissoes/{submissao_id}/relatorio-ia
+  Perfis: P; R (dependente); A (próprio)
+  Response 200: RelatorioIAResponse|null
+  RelatorioIAResponse:
+    id, texto_longo, versao, criado_em, status_job: ok|pendente|erro
+
+GET /submissoes/{submissao_id}/relatorio-ia/historico
+  Response: lista de RelatorioIAResponse ordenada por versao desc
+
+================================================================================
+4. DTOs (PYDANTIC) — REFERÊNCIA DE CAMPOS E VALIDAÇÕES
+================================================================================
+
+4.1 Enums
+- PerfilUsuario: professor | aluno | responsavel
+- StatusConta: ativa | suspensa | pendente_ativacao
+- StatusAvaliacao: rascunho | publicada | encerrada
+- StatusComunicado: rascunho | publicado
+- TipoAnexoMaterial: pdf | audio | imagem | video | nota
+- TipoQuestao: multipla_escolha | texto_aberto
+- TipoDestinatarioComunicado: aluno | turma | responsavel
+- StatusSubmissao: rascunho | enviada | corrigida_parcialmente | corrigida
+- TipoNotificacao: comunicado_novo | relatorio_ia_pronto | avaliacao_publicada | ...
+
+4.2 Auth
+- LoginRequest: email, senha
+- TokenPair: access_token, refresh_token, token_type, expira_em
+- UserMe:
+    usuario_id, email, nome_exibicao, perfil: PerfilUsuario,
+    instituicao_id, preferencias: { tema, idioma, ... }
+- UserPreferencesPatch: campos opcionais tema, idioma, densidade_ui
+
+4.3 Avaliações
+- QuestaoUpsert:
+    id: UUID|null (null = nova)
+    tipo: TipoQuestao
+    ordem: int
+    enunciado: str (min 1)
+    alternativas: [ str, ... ]|null  // obrigatório se multipla_escolha, len >= 2
+    resposta_correta: int|null       // índice 0..n-1; null se texto_aberto
+    peso: Decimal default 1
+  Validação: se multipla_escolha, resposta_correta não nulo e < len(alternativas)
+
+- QuestaoResponse: id, tipo, ordem, enunciado, alternativas, resposta_correta (omitir em visão aluno)
+
+- AvaliacaoDetailResponse: conforme seção 3.5
+
+4.4 Aluno / Submissão
+- RespostaQuestaoInput:
+    questao_id: UUID
+    valor_texto: str|null
+    indice_selecionado: int|null   // para MCQ
+- SubmissaoResponse:
+    id, avaliacao_id, aluno_id, status, iniciada_em, enviada_em,
+    nota_decimal|null, correcao_pendente: bool
+
+4.5 Conteúdo
+- MaterialEstudoResponse:
+    id, pasta_id, titulo, descricao, tipo_anexo, disciplina_nome, cor_disciplina_token,
+    data_hora_exibicao, duracao_texto|null, corpo_texto|null, urls: { download, preview } opcional,
+    anexos: [ { nome, blob_id } ] opcional
+
+4.6 Comunicados
+- ComunicadoDetailResponse:
+    id, titulo, corpo, autor_nome, autor_id, status, destinatarios_exibicao: [str],
+    imagens_urls: [str], criado_em, atualizado_em, lido: bool (para o solicitante)
+
+4.7 Busca e notificações
+- SearchResponse, SearchHit — seção 3.3
+- NotificacaoItem — seção 3.4
+
+4.8 Dashboard
+- DashboardResumoResponse — seção 3.8
+
+================================================================================
+5. REGRAS DE NEGÓCIO DETALHADAS (CHECKLIST)
+================================================================================
+
+5.1 Ciclo de vida da avaliação
+- rascunho: visível apenas professor; alunos não listam; edição de questões permitida.
+- publicada: visível aos alunos da turma escopada; aceita submissão até prazo_utc ou até
+  encerramento manual.
+- encerrada: nenhuma nova submissão nem alteração de respostas; transição irreversível MVP.
+- publicada → encerrada: professor; automática opcional quando prazo expira (job).
+
+5.2 Edição de conteúdo (paridade UI modulo-avaliacoes)
+- modo edição na UI só quando status == rascunho; backend deve retornar 403 em mutações de
+  questões se status != rascunho.
+
+5.3 Prazo
+- Comparar instante atual UTC com prazo_utc no servidor em toda submissão/envio.
+- Encerramento manual prevalece sobre prazo (avaliacao encerrada bloqueia mesmo dentro do prazo).
+
+5.4 Unicidade de submissão
+- Unique (avaliacao_id, aluno_id) na tabela submissao.
+- Resposta por questão: unique (submissao_id, questao_id).
+
+5.5 Contadores em pasta de avaliações
+- alunos_responderam: distinct alunos com submissao status enviada (ou corrigida*) na pasta
+  (agregando todas avaliações da pasta conforme regra de produto — definir: por pasta
+  significa união de avaliações na pasta; contar aluno que respondeu ao menos uma).
+- alunos_total: alunos matriculados na turma escopada da pasta/avaliação.
+- avaliacoes_concluidas / avaliacoes_total: contagem por estados das avaliações filhas.
+- status_resumo: string derivada (ex.: "1 rascunho · 1 publicada · 1 encerrada").
+- Implementação: view materializada ou job de reconciliação; triggers possíveis mas documentar.
+
+5.6 Comunicados
+- Validação de criação: titulo não vazio; corpo não vazio OU imagens_urls não vazio.
+- Destinatários: pelo menos um.
+- Rascunho: visível apenas ao autor na listagem padrão até publicar.
+
+5.7 RBAC
+- Middleware de perfil em cada rota; testes de integração para 403 em mutações indevidas.
+
+5.8 IA
+- Chat de elaboração: apenas professor; não expor chaves de LLM ao cliente.
+- Relatório IA: versão incrementada a cada regeneração; armazenar id_job_auditoria se exigido.
+
+5.9 Privacidade e escopo
+- Responsável só acessa dados de alunos vinculados em aluno_responsavel.
+- Professor só turmas/instituição associadas (política MVP: professor titular).
+
+================================================================================
+6. MODELO DE DADOS (TABELAS, CAMPOS, RELACIONAMENTOS)
+================================================================================
+
+Convenção: PK id UUID; FKs *_id UUID; snake_case.
+
+6.1 instituicao
+- id PK
+- nome_fantasia text NOT NULL
+- documento_legal text NULL
+- configuracoes_jsonb jsonb NULL
+- criado_em, atualizado_em
+
+6.2 usuario_conta
+- id PK
+- instituicao_id FK → instituicao.id NOT NULL
+- email citext UNIQUE NOT NULL
+- senha_hash text NOT NULL
+- tipo_perfil enum NOT NULL
+- status_conta enum NOT NULL
+- nome_exibicao text NOT NULL
+- preferencias_ui jsonb NULL  // tema, idioma
+- criado_em, atualizado_em
+
+6.3 professor
+- id PK
+- usuario_id FK → usuario_conta.id UNIQUE NOT NULL
+- registro_funcional text NULL
+- areas_especialidade text NULL
+
+6.4 aluno
+- id PK
+- usuario_id FK → usuario_conta.id UNIQUE NOT NULL
+- nome_social text NULL
+- data_nascimento date NULL
+- matricula_codigo text NULL
+
+6.5 responsavel
+- id PK
+- usuario_id FK → usuario_conta.id UNIQUE NOT NULL
+- grau_parentesco text NULL
+- telefone text NULL
+
+6.6 aluno_responsavel
+- id PK
+- aluno_id FK → aluno.id NOT NULL
+- responsavel_id FK → responsavel.id NOT NULL
+- responsavel_principal boolean NOT NULL DEFAULT false
+- ordem_contato int NULL
+- UNIQUE (aluno_id, responsavel_id)
+
+6.7 turma
+- id PK
+- instituicao_id FK NOT NULL
+- professor_titular_id FK → professor.id NULL  // MVP opcional
+- nome text NOT NULL
+- ano_letivo text NOT NULL
+- turno text NULL
+- criado_em, atualizado_em
+
+6.8 matricula
+- id PK
+- aluno_id FK NOT NULL
+- turma_id FK NOT NULL
+- data_inicio date NOT NULL
+- data_fim date NULL
+- situacao enum NOT NULL  // ativa, encerrada, transferida
+- UNIQUE parcial: um aluno com no máximo uma matricula situacao=ativa (índice único filtrado)
+
+6.9 materia_curricular (avaliações — taxonomia docente)
+- id PK
+- instituicao_id FK NOT NULL
+- professor_autor_id FK → professor.id NOT NULL
+- nome text NOT NULL
+- slug text NULL
+- cor_token_ui text NULL
+- ordem int NULL
+- criado_em, atualizado_em
+
+6.10 assunto
+- id PK
+- materia_id FK → materia_curricular.id NOT NULL
+- nome text NOT NULL
+- ordem int NOT NULL DEFAULT 0
+
+6.11 pasta_avaliacoes
+- id PK
+- assunto_id FK NOT NULL
+- nome text NOT NULL
+- resumo_status_texto text NULL  // opcional cache, senão só view
+- criado_em, atualizado_em
+// Contadores agregados NÃO persistidos como fonte de verdade — apenas cache opcional
+
+6.12 avaliacao
+- id PK
+- pasta_id FK NOT NULL
+- titulo text NOT NULL
+- status enum NOT NULL
+- publicado_em timestamptz NULL
+- encerrada_em timestamptz NULL
+- prazo_utc timestamptz NULL
+- payload_editor_jsonb jsonb NULL
+- versao int NOT NULL DEFAULT 1  // otimistic locking opcional
+- criado_em, atualizado_em
+
+6.13 questao
+- id PK
+- avaliacao_id FK NOT NULL
+- ordem int NOT NULL
+- tipo enum NOT NULL
+- enunciado text NOT NULL
+- alternativas_jsonb jsonb NULL  // array de strings para MCQ
+- indice_gabarito int NULL
+- peso numeric NOT NULL DEFAULT 1
+- UNIQUE (avaliacao_id, ordem)
+
+6.14 submissao
+- id PK
+- avaliacao_id FK NOT NULL
+- aluno_id FK NOT NULL
+- status enum NOT NULL
+- iniciada_em timestamptz NOT NULL
+- enviada_em timestamptz NULL
+- nota_decimal numeric NULL
+- UNIQUE (avaliacao_id, aluno_id)
+
+6.15 resposta_questao
+- id PK
+- submissao_id FK NOT NULL
+- questao_id FK NOT NULL
+- valor_jsonb jsonb NULL  // { "indice": n } ou { "texto": "..." }
+- correta_flag boolean NULL  // null se aberto não corrigido
+- pontos_obtidos numeric NULL
+- UNIQUE (submissao_id, questao_id)
+
+6.16 relatorio_ia
+- id PK
+- submissao_id FK NOT NULL
+- texto_longo text NOT NULL
+- versao int NOT NULL
+- criado_em timestamptz NOT NULL
+- id_job_auditoria uuid NULL
+- status_job text NOT NULL DEFAULT 'ok'
+- UNIQUE (submissao_id, versao) ou versão monotônica por submissao
+
+6.17 pasta_conteudo
+- id PK
+- instituicao_id FK NOT NULL
+- turma_id FK NULL  // escopo opcional; se null, pasta institucional
+- nome_disciplina text NOT NULL
+- cor_token_ui text NULL
+- icone text NULL
+- ordem int NULL
+- criado_em, atualizado_em
+
+6.18 material_estudo
+- id PK
+- pasta_conteudo_id FK NOT NULL
+- professor_autor_id FK → professor.id NOT NULL
+- titulo text NOT NULL
+- descricao text NULL
+- tipo_anexo enum NOT NULL
+- corpo_texto text NULL
+- url_objeto text NULL  // chave ou URL canônica no blob
+- blob_id FK NULL → upload_blob.id
+- metadados_duracao_texto text NULL
+- ordem_exibicao int NULL
+- criado_em timestamptz NOT NULL
+
+6.19 upload_blob
+- id PK
+- instituicao_id FK NOT NULL
+- criado_por_usuario_id FK NOT NULL
+- nome_original text NOT NULL
+- mime_type text NOT NULL
+- tamanho_bytes bigint NOT NULL
+- storage_key text NOT NULL
+- contexto text NOT NULL
+- criado_em timestamptz NOT NULL
+
+6.20 comunicado
+- id PK
+- instituicao_id FK NOT NULL
+- emissor_professor_id FK → professor.id NOT NULL  // ou usuario_id se generalizar
+- turma_escopo_id FK NULL  // opcional reforço de escopo
+- titulo text NOT NULL
+- corpo text NOT NULL
+- status enum NOT NULL
+- criado_em, atualizado_em, publicado_em NULL
+
+6.21 comunicado_imagem
+- id PK
+- comunicado_id FK NOT NULL
+- url text NOT NULL
+- ordem int NOT NULL
+
+6.22 comunicado_destinatario
+- id PK
+- comunicado_id FK NOT NULL
+- tipo enum NOT NULL  // aluno, turma, responsavel
+- entidade_id UUID NOT NULL  // id do aluno, turma ou responsavel conforme tipo
+- expandido_para_usuarios: não tabela; resolução em job ou na publicação
+
+6.23 comunicado_leitura
+- id PK
+- comunicado_id FK NOT NULL
+- usuario_id FK NOT NULL
+- lido_em timestamptz NOT NULL
+- UNIQUE (comunicado_id, usuario_id)
+
+6.24 comunicado_destinatario_efetivo (opcional normalização)
+- comunicado_id, usuario_id (destinatário final após expansão)
+- UNIQUE (comunicado_id, usuario_id)
+// simplifica inbox e RF-010
+
+6.25 notificacao
+- id PK
+- usuario_id FK NOT NULL
+- titulo text NOT NULL
+- corpo_curto text NOT NULL
+- tipo_evento text NOT NULL
+- lida_flag boolean NOT NULL DEFAULT false
+- link_profundo text NULL
+- criado_em timestamptz NOT NULL
+
+6.26 avaliacao_chat_mensagem
+- id PK
+- avaliacao_id FK NOT NULL
+- professor_id FK NOT NULL
+- papel enum NOT NULL  // usuario, assistente
+- conteudo text NOT NULL
+- criado_em timestamptz NOT NULL
+
+6.27 dashboard_fato_desempenho (fato agregável — exemplo)
+- id PK
+- instituicao_id FK NOT NULL
+- turma_id FK NULL
+- aluno_id FK NULL
+- disciplina_id UUID NULL  // pode referenciar materia_curricular ou tabela disciplina canônica
+- periodo_referencia date NOT NULL  // dia ou mês
+- media numeric NULL
+- taxa_aprovacao numeric NULL
+- pendentes_correcao int NULL
+- fonte text NOT NULL  // job_etl | online
+// Alternativa: não materializar; usar views sobre submissao + notas
+
+Relacionamentos principais (resumo):
+- instituicao 1:N turma, usuario_conta, materia_curricular, pasta_conteudo, comunicado
+- materia_curricular 1:N assunto 1:N pasta_avaliacoes 1:N avaliacao 1:N questao
+- avaliacao 1:N submissao; submissao N:1 aluno; submissao 1:N resposta_questao
+- submissao 1:N relatorio_ia (versionado)
+- pasta_conteudo 1:N material_estudo
+- comunicado 1:N comunicado_destinatario; comunicado 1:N comunicado_leitura
+- professor 1:N comunicado (emissão)
+
+Diagrama ER (Mermaid, referência):
+
+erDiagram
+  Instituicao ||--o{ Turma : tem
+  Instituicao ||--o{ UsuarioConta : tem
+  UsuarioConta ||--o| Professor : perfil
+  UsuarioConta ||--o| Aluno : perfil
+  UsuarioConta ||--o| Responsavel : perfil
+  Turma ||--o{ Matricula : recebe
+  Aluno ||--o{ Matricula : possui
+  Aluno ||--o{ AlunoResponsavel : vinculo
+  Responsavel ||--o{ AlunoResponsavel : vinculo
+  MateriaCurricular ||--o{ Assunto : contem
+  Assunto ||--o{ PastaAvaliacoes : contem
+  PastaAvaliacoes ||--o{ Avaliacao : contem
+  Avaliacao ||--o{ Questao : contem
+  Avaliacao ||--o{ Submissao : recebe
+  Aluno ||--o{ Submissao : envia
+  Submissao ||--o{ RespostaQuestao : agrega
+  Submissao ||--o| RelatorioIA : gera
+  PastaConteudo ||--o{ MaterialEstudo : contem
+  Professor ||--o{ Comunicado : emite
+  Comunicado ||--o{ ComunicadoDestinatario : segmenta
+  Comunicado ||--o{ ComunicadoLeitura : rastreia
+
+================================================================================
+7. JOBS ASSÍNCRONOS E INTEGRAÇÕES
+================================================================================
+
+7.1 Filas recomendadas
+- correcao_objetiva: ao enviar submissão, calcular MCQ, atualizar nota_decimal parcial.
+- relatorio_ia: após correção objetiva (ou imediatamente após envio se só abertas), chamar LLM;
+  persistir relatorio_ia; notificar responsável/aluno conforme política.
+- expiracao_avaliacao: cron para transicionar avaliacao para encerrada quando prazo_utc passou
+  (opcional se encerramento só manual).
+- reindexacao_search: após mudanças em títulos/comunicados/materiais.
+- reconciliar_contadores_pasta: job periódico se não usar view.
+
+7.2 Integração LLM
+- Prompts versionados; armazenar modelo e hash do prompt em id_job_auditoria ou tabela
+  auditoria_ia.
+- Timeout e retry com backoff; status_job em relatorio_ia.
+
+7.3 WebSocket/SSE (opcional)
+- Canal por avaliacao_id para streaming de respostas do assistente.
+
+================================================================================
+8. ÍNDICES E PERFORMANCE
+================================================================================
+
+- usuario_conta (instituicao_id, email) UNIQUE já coberto por email global — avaliar multi-tenant
+  com email único por instituicao: UNIQUE (instituicao_id, lower(email))
+- submissao (avaliacao_id, aluno_id) UNIQUE
+- resposta_questao (submissao_id, questao_id) UNIQUE
+- comunicado_leitura (comunicado_id, usuario_id) UNIQUE
+- notificacao (usuario_id, lida_flag, criado_em DESC)
+- avaliacao (pasta_id, status)
+- questao (avaliacao_id, ordem)
+- material_estudo (pasta_conteudo_id, criado_em DESC)
+- Full-text: GIN em comunicado(titulo, corpo), material_estudo(titulo, descricao), avaliacao(titulo)
+- Particionamento: opcional por instituicao_id em tabelas muito grandes (futuro)
+
+================================================================================
+9. MAPEAMENTO RF-001 … RF-017 (ESPECIFICAÇÃO)
+================================================================================
+
+RF-001 Global/Cabeçalho
+  Endpoints: /search, /notificacoes*, /users/me/preferences, /auth/me
+  Tabelas: notificacao, usuario_conta.preferencias_ui
+
+RF-002 Segurança / Acesso
+  Implementação: middleware RBAC + testes; matriz seção 2
+
+RF-003 Módulo Conteúdo (tipos de anexo + modal)
+  Endpoints: /conteudo/*, /uploads/presign
+  Tabelas: pasta_conteudo, material_estudo, upload_blob
+
+RF-004 Módulo Conteúdo (filtros/busca)
+  GET /conteudo/pastas/{id}/materiais?tipo= ; /search types=material
+
+RF-005 Módulo Avaliações (hierarquia e estados)
+  /avaliacoes/materias*, assuntos*, pastas*, avaliacoes* ; enums status
+
+RF-006 Módulo Avaliações (editor + assistente)
+  Questões + POST /avaliacoes/avaliacoes/{id}/chat
+
+RF-007 Auto-save rascunho
+  POST .../salvar-rascunho + versao/If-Match opcional; fila Redis cache (alvo arquitetura)
+
+RF-008 Criar matéria, assunto, pasta
+  POST matérias, POST assuntos, POST pastas
+
+RF-009 Bloqueio pós-prazo/encerrada
+  POST /aluno/submissoes/{id}/enviar validação servidor
+
+RF-010 Comunicado segmentado
+  comunicado_destinatario + expansão + RF inbox escopada
+
+RF-011 Leitura persistente
+  comunicado_leitura + GET /comunicados/{id}
+
+RF-012 Dashboard AI
+  GET /dashboard/resumo
+
+RF-013 Nota objetiva pós-submissão
+  Job correcao_objetiva + campos submissao.nota_decimal / resposta_questao.correta_flag
+
+RF-014 Job LLM relatório
+  relatorio_ia + fila relatorio_ia
+
+RF-015 Navegação móvel
+  Somente frontend; backend indireto: mesmas rotas
+
+RF-016 Sidebar recolhível
+  Frontend; preferências opcional em usuario_conta
+
+RF-017 Questões MCQ e abertas
+  questao.tipo, alternativas_jsonb, indice_gabarito, resposta_questao.valor_jsonb
+
+================================================================================
+10. APÊNDICE A — MATRIZ ENDPOINT × PERFIL (DETALHADA)
+================================================================================
+Legenda: · = sem acesso; R = leitura; W = escrita; O = escopo restrito (próprio/dependente)
+
+Método Path                                    | Prof | Aluno | Resp
+-----------------------------------------------+------+-------+------
+POST   /auth/login                             |  R   |   R   |  R
+POST   /auth/refresh                           |  R   |   R   |  R
+POST   /auth/logout                            |  W   |   W   |  W
+GET    /auth/me                                |  R   |   R   |  R
+PATCH  /users/me/preferences                  |  W   |   W   |  W
+GET    /instituicoes/{id}                      |  O   |   O   |  O
+GET    /turmas                                 |  R   |   O   |  O
+GET    /turmas/{id}                            |  R   |   O   |  O
+GET    /turmas/{id}/alunos                     |  R   |   ·   |  O
+GET    /alunos/{id}                            |  R   |   O   |  O
+GET    /alunos/{id}/responsaveis               |  R   |   O   |  ·
+GET    /search                                 |  R   |  O*  |  O*
+GET    /notificacoes                           |  R   |   R   |  R
+PATCH  /notificacoes/{id}/lida                 |  W   |   W   |  W
+POST   /notificacoes/marcar-todas-lidas        |  W   |   W   |  W
+GET    /avaliacoes/materias                    |  R   |   ·   |  ·
+POST   /avaliacoes/materias                    |  W   |   ·   |  ·
+PATCH  /avaliacoes/materias/{id}               |  W   |   ·   |  ·
+DELETE /avaliacoes/materias/{id}                |  W   |   ·   |  ·
+GET    /avaliacoes/materias/{id}/arvore        |  R   |   ·   |  ·
+POST   /avaliacoes/materias/{id}/assuntos      |  W   |   ·   |  ·
+PATCH  /avaliacoes/assuntos/{id}               |  W   |   ·   |  ·
+DELETE /avaliacoes/assuntos/{id}                |  W   |   ·   |  ·
+POST   /avaliacoes/assuntos/{id}/pastas        |  W   |   ·   |  ·
+GET    /avaliacoes/pastas/{id}                 |  R   |   ·   |  ·
+PATCH  /avaliacoes/pastas/{id}                  |  W   |   ·   |  ·
+GET    /avaliacoes/pastas/{id}/avaliacoes      |  R   |   ·   |  ·
+POST   /avaliacoes/pastas/{id}/avaliacoes      |  W   |   ·   |  ·
+GET    /avaliacoes/avaliacoes/{id}             |  R   |   ·   |  ·
+PATCH  /avaliacoes/avaliacoes/{id}             |  W   |   ·   |  ·
+POST   /avaliacoes/avaliacoes/{id}/salvar-rascunho | W | · | ·
+POST   /avaliacoes/avaliacoes/{id}/publicar    |  W   |   ·   |  ·
+POST   /avaliacoes/avaliacoes/{id}/encerrar    |  W   |   ·   |  ·
+PUT    /avaliacoes/avaliacoes/{id}/questoes    |  W   |   ·   |  ·
+POST   /avaliacoes/avaliacoes/{id}/questoes    |  W   |   ·   |  ·
+PATCH  /avaliacoes/avaliacoes/{id}/questoes/{qid} | W | · | ·
+DELETE /avaliacoes/avaliacoes/{id}/questoes/{qid} | W | · | ·
+POST   /avaliacoes/avaliacoes/{id}/questoes/reordenar | W | · | ·
+POST   /avaliacoes/avaliacoes/{id}/chat        |  W   |   ·   |  ·
+GET    /avaliacoes/avaliacoes/{id}/chat        |  R   |   ·   |  ·
+GET    /aluno/avaliacoes/disponiveis           |  ·   |   R   |  ·
+GET    /aluno/avaliacoes/{id}                  |  ·   |   R   |  ·
+POST   /aluno/avaliacoes/{id}/submissoes       |  ·   |   W   |  ·
+PATCH  /aluno/submissoes/{id}                  |  ·   |   W   |  ·
+POST   /aluno/submissoes/{id}/enviar           |  ·   |   W   |  ·
+GET    /conteudo/pastas                        |  R   |   R   |  R**
+POST   /conteudo/pastas                        |  W   |   ·   |  ·
+PATCH  /conteudo/pastas/{id}                   |  W   |   ·   |  ·
+DELETE /conteudo/pastas/{id}                   |  W   |   ·   |  ·
+GET    /conteudo/pastas/{id}/materiais         |  R   |   R   |  R**
+POST   /conteudo/pastas/{id}/materiais         |  W   |   ·   |  ·
+GET    /conteudo/materiais/{id}                |  R   |   R   |  R**
+PATCH  /conteudo/materiais/{id}                |  W   |   ·   |  ·
+DELETE /conteudo/materiais/{id}                |  W   |   ·   |  ·
+POST   /uploads/presign                        |  W   |   ·   |  ·***
+GET    /comunicados                            |  R   |   R   |  R
+GET    /comunicados/{id}                       |  R   |   R   |  R
+POST   /comunicados/{id}/marcar-lido           |  W   |   W   |  W
+POST   /comunicados                            |  W   |   ·   |  ·
+PATCH  /comunicados/{id}                       |  W   |   ·   |  ·
+POST   /comunicados/{id}/publicar              |  W   |   ·   |  ·
+GET    /dashboard/resumo                       |  R   |   ·   |  O
+GET    /submissoes/{id}/relatorio-ia           |  R   |   O   |  O
+GET    /submissoes/{id}/relatorio-ia/historico |  R   |   O   |  O
+
+* Busca federada restrita no MVP para aluno/responsável (apenas tipos permitidos).
+** Leitura de conteúdo conforme política de publicação por turma/disciplina.
+*** Upload: aluno pode precisar de presign apenas se futuro envio de trabalhos; MVP professor.
+
+================================================================================
+11. APÊNDICE B — CÓDIGOS HTTP POR OPERAÇÃO (REFERÊNCIA RÁPIDA)
+================================================================================
+- 200 OK: GET/PATCH bem-sucedido com corpo
+- 201 Created: POST criação
+- 202 Accepted: job assíncrono (chat IA)
+- 204 No Content: DELETE ou logout
+- 400 Bad Request: regra de negócio violada (envelope code)
+- 401 Unauthorized: token ausente/inválido
+- 403 Forbidden: perfil ou estado (ex.: edição de avaliação não rascunho)
+- 404 Not Found: id inexistente ou fora do tenant
+- 409 Conflict: unicidade submissão, transição de estado inválida
+- 422 Unprocessable Entity: validação Pydantic (campos)
+- 429 Too Many Requests: rate limit login/search
+- 500 Internal Server Error: falha não tratada
+
+================================================================================
+FIM DO ROADMAP BACKEND
+================================================================================

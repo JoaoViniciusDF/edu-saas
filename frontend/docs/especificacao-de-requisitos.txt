@@ -1,0 +1,829 @@
+Especificação de Requisitos e Arquitetura de Software: Sistema de Gestão e Observabilidade Educacional (MVP)
+
+Visão Executiva do Produto
+
+O ecossistema educacional contemporâneo encontra-se em um ponto de inflexão crítico, transitando de ferramentas digitais isoladas e reativas para plataformas de orquestração integradas que utilizam a inteligência artificial generativa como componente estrutural.1 A presente especificação técnica detalha o delineamento arquitetural e funcional para o Produto Mínimo Viável (MVP) de um Sistema de Gestão e Observabilidade Educacional de vanguarda. O propósito fundamental da plataforma transcende a mera digitalização do ambiente de sala de aula; seu núcleo operacional é concebido para fornecer ao corpo docente um controle em tempo real, observabilidade profunda do engajamento estudantil e ferramentas avançadas de inteligência artificial voltadas para o diagnóstico tempestivo do desempenho e das dificuldades cognitivas individuais.2
+
+Historicamente, o acúmulo de dados educacionais tem gerado passivos informacionais que sobrecarregam professores e gestores, dificultando a extração de inteligência acionável.4 O sistema proposto soluciona essa assimetria atuando como um "copiloto" analítico e operacional. A arquitetura consolida quatro vetores primários em uma única topologia de produto: o repositório didático organizado por disciplinas e tipos de mídia, um motor de geração e aplicação de avaliações hierarquizado (matéria, assunto temático, pasta de avaliações) impulsionado por modelos de linguagem de grande escala (LLMs) em regime de coautoria (sidecar), um módulo centralizado de comunicação assíncrona com segmentação de público, e um painel de observabilidade (Dashboard AI) com métricas e insights sintetizados.
+
+Ao unificar esses módulos, a plataforma captura continuamente a telemetria do aprendizado, transformando interações brutas em métricas preditivas de desempenho.5 Toda avaliação concluída retroalimenta imediatamente o motor de inteligência artificial, que sintetiza relatórios de desempenho e atualiza painéis visuais (dashboards). Esta malha de observabilidade é estendida, mediante controles criptográficos e políticas de acesso rigorosas, aos responsáveis legais, democratizando a transparência sobre a evolução acadêmica sem comprometer a soberania editorial do professor.4 O resultado é uma infraestrutura de software resiliente que não apenas acompanha as tendências de aprendizado, mas também prescreve intervenções pedagógicas precisas, redefinindo os padrões de eficácia das tecnologias educacionais.5
+
+Sincronização entre experiência de interface e persistência alvo: A camada de experiência do produto EduSaaS, na linha do tempo deste repositório, materializa navegação, hierarquia de avaliações, estados de prova, comunicados segmentados e painel analítico em interface web (aplicação cliente). A persistência relacional, autenticação federada, busca indexada em múltiplas tabelas, filas assíncronas para LLM e armazenamento de objetos constituem a arquitetura alvo descrita neste documento; exceto onde indicado, referências a JWT, API, cron e Redis designam requisitos de solução, não afirmação de implementação concluída em ambiente de produção.
+
+Estrutura de Domínio e Governança de Entidades
+
+A fundação do sistema repousa sobre um modelo de domínio estrito que espelha as hierarquias organizacionais das instituições de ensino. As regras de cardinalidade estabelecidas nesta arquitetura não são meras convenções de banco de dados; elas representam restrições de negócio fundamentais que garantem o isolamento de dados (tenant isolation) e a governança da informação.7
+
+Instituição (tenant): Recomenda-se modelar explicitamente a entidade Instituição ou Escola como raiz de isolamento lógico. Turmas, contas de usuário vinculadas ao contrato institucional, comunicados oficiais e políticas de retenção de dados passam a referenciar id_instituicao, permitindo evolução multi-escola sem colisão de chaves nem vazamento de painéis entre clientes distintos.
+
+Ano letivo e Turma: A Turma mantém nome, vínculo à instituição, identificador de ano letivo ou período acadêmico, e referência ao professor responsável ou conjunto docente conforme política adotada. Para o MVP pode prevalecer um único professor titular por turma (1:N Professor para Turmas); o modelo físico pode prever tabela de junção Turma_Professor (N:N) caso a instituição exija equipe pedagógica rotativa sem duplicar turmas.
+
+Professor para Turma (governança pedagógica): Sob a política MVP de professor titular, estabelece-se 1:N do Professor para Turmas. Todo conteúdo didático publicado, avaliação criada e comunicado emitido herda escopo da turma (e instituição) para filtros de RBAC e de agregação no Dashboard.
+
+Turma para Aluno via Matrícula: Em vez de acoplar o aluno diretamente apenas por FK única, recomenda-se entidade Matricula (id_aluno, id_turma, data_inicio, data_fim, situacao). Para o escopo MVP que fixa um aluno em uma única turma ativa, impõe-se constraint de unicidade (id_aluno) onde situacao = ativa, preservando a regra de negócio de coorte única e simplificando painéis por turma.
+
+Responsável para Aluno: Do ponto de vista do Responsável, 1:N (vários alunos). Do ponto de vista do aluno, a regra de canal principal para alertas pode permanecer N:1 via flag responsavel_principal na tabela de junção Aluno_Responsavel; o modelo físico com tabela de junção permite segundo responsável legal ou contato de emergência sem violar integridade, desde que a aplicação roteie comunicados críticos ao principal quando configurado.
+
+Grafo referencial em prosa (persistência alvo): Instituicao agrega Turmas. Usuario_Conta autentica indivíduos e discrimina tipo_perfil. Professor cria Materia_curricular dentro do seu escopo; cada Materia contém Assuntos; cada Assunto contém Pastas_de_Avaliacoes; cada Pasta contém Avaliacoes; cada Avaliacao contém Questoes. Aluno submete no máximo uma Submissao por Avaliacao (constraint única composta); Submissao agrega Resposta_questao; Submissao gera opcionalmente Relatorio_IA. Paralelamente, Professor publica Materiais_estudo em Pastas_conteudo_disciplina. Professor emite Comunicado com linhas em Comunicado_destinatario; leituras registram-se em Comunicado_leitura. Notificacao_in_app alimenta o painel do cabeçalho. Esta malha sustenta a interface atual (listas, contadores, estados) após migração dos dados mock para o servidor.
+
+Arquitetura de Perfis de Usuário e Controle de Acesso (RBAC)
+
+Em conformidade com as diretrizes de segurança modernas e a topologia de confiança zero (Zero-Trust Architecture), o controle de acesso baseia-se no Princípio do Menor Privilégio.7 O sistema implementa um modelo de Controle de Acesso Baseado em Funções (RBAC), assegurando que cada interação transite por verificações rigorosas de identidade no nível do Gateway da API antes de atingir o monolito modular ou serviços satélites de IA.
+
+As permissões são estritamente delimitadas em três níveis de autorização:
+
+Professor (Acesso de Administrador de Domínio Pedagógico): O perfil docente retém privilégios de CRUD sobre entidades no escopo das suas turmas e instituição: matérias e assuntos de avaliação, pastas de avaliações, avaliações e questões, materiais didáticos, comunicados. É o único perfil autorizado a invocar o motor de IA para síntese de questões, publicar ou encerrar avaliações, definir prazos, e despachar comunicados segmentados. Acesso à telemetria granular, respostas brutas quando permitido por política, e relatórios IA dos seus alunos.
+
+Responsável (Visão Avançada de Somente Leitura): Espelha a visibilidade analítica do professor apenas para alunos vinculados. Consome dashboards, relatórios IA e comunicados dirigidos a responsáveis. Não altera conteúdo, avaliações ou configurações; não envia comunicados institucionais.
+
+Aluno (Visão Operacional Restrita): Consome materiais didáticos autorizados; responde avaliações no estado publicada e dentro da janela temporal; consulta próprias notas e feedback objetivo. Não cria matérias, pastas, questões ou comunicados. A submissão final da prova constitui exceção explícita de escrita permitida ao aluno sobre suas próprias respostas (RF-002).
+
+Regras de Negócio do Ciclo de Vida da Avaliação
+
+Estado Rascunho: Apenas professor e equipe autorizada editam questões e metadados. Alunos não visualizam a avaliação na lista de provas disponíveis. Contadores de turma podem excluir rascunhos ou exibi-los apenas na visão docente.
+
+Estado Publicada: Avaliação visível aos alunos da turma escopada; respostas aceitas até data_hora_encerramento ou até ação explícita de encerramento antecipado pelo professor, conforme política institucional.
+
+Estado Encerrada: Nenhuma nova submissão ou alteração de resposta; leitura de gabarito e notas conforme política (ex.: liberação imediata ou após revisão). Transição de publicada para encerrada é irreversível no MVP para preservar integridade acadêmica.
+
+Integridade de Submissão: No máximo uma submissao por par (id_avaliacao, id_aluno). Respostas armazenadas por questão em Resposta_questao facilitam correção parcial e relatórios IA por habilidade.
+
+Atributos derivados e consistência: Campos exibidos na interface como alunosResponderam, avaliacoesConcluidas, avaliacoesTotal e textos de statusResumo devem ser implementados como visões materializadas, consultas agregadas ou jobs de reconciliação sobre Submissao e estado das avaliações, evitando divergência entre cartões de pasta e dados brutos.
+
+Especificação dos Módulos Funcionais e Interface de Usuário
+
+A concepção da Interface de Usuário (UI) e da Experiência do Usuário (UX) prioriza a minimização da carga cognitiva. A navegação persistente combina Cabeçalho Global em ambiente de mesa, Barra Lateral (sidebar) com quatro destinos principais — Conteúdo, Avaliações, Comunicados, Dashboard AI — e adaptação responsiva para viewport reduzida.
+
+Componentes Globais da Interface
+
+Barra lateral (desktop): Logotipo e rótulo do produto, lista de rotas com realce do item ativo, botão de recolhimento que exibe apenas ícones com Tooltip explicativo, e bloco opcional de "Dica do dia" quando expandida.14
+
+Navegação móvel: Em larguras estreitas, barra superior fixa com controle que abre Painel lateral deslizante (padrão Sheet) reproduzindo os mesmos links; o fechamento ocorre após seleção de rota.
+
+Cabeçalho (desktop): Campo de busca unificada com atalho de teclado indicado visualmente; área de notificações em painel flutuante (Popover) listando eventos recentes; alternador de tema claro/escuro; menu de perfil com avatar, nome, e-mail e ações (perfil, configurações, ajuda, saída). A busca federada sobre alunos, materiais, avaliações e comunicados é requisito de arquitetura alvo; a interface atual pode exibir o campo como preparação UX até integração com índice ou consulta transversal no backend.
+
+Módulo 1: Conteúdo Didático (Pastas por Disciplina)
+
+Substitui o modelo exclusivo de feed cronológico único por um repositório organizado em pastas de disciplina (ex.: Matemática, História), alinhado à segmentação curricular e aos filtros por pasta. O professor anexa ou registra materiais com tipos de anexo: documento (PDF), áudio, imagem, vídeo, ou nota textual com possibilidade de nomes de arquivos associados.
+
+A listagem prioriza leitura escaneável com metadados (data, duração ou tamanho descritivo, disciplina). Filtros e busca local restringem o conjunto visível. Interações modais: diálogo para criação de nova nota (título, corpo, anexos); diálogo de visualização de material com cabeçalho rico, corpo e área de conteúdo rolável; fechamento acessível. A ordenação pode privilegiar o mais recente dentro da pasta selecionada.
+
+Módulo 2: Avaliações com Assistente de IA (Hierarquia e Editor)
+
+Organização hierárquica: Matéria (nome, identificador, cor de apoio para UI) contém Assuntos (eixos temáticos); cada Assunto contém Pastas de avaliações (unidades que agrupam provas e exibem resumo de quantitativos: alunos que responderam, totais, distribuição de status). Cada Pasta lista Avaliações com estado Rascunho, Publicada ou Encerrada.
+
+Rotas de experiência: Listagem de matérias; página de matéria com assuntos e pastas; página de pasta com lista de avaliações; rota de edição com identificador de avaliação ou segmento reservado para criação de nova prova. Diálogos de fluxo: criação de nova matéria; criação de novo assunto ou pasta conforme contexto da tela; criação de pasta de avaliações dentro do assunto.
+
+Editor de avaliação: Layout bipartido — painel principal de questões (múltipla escolha com alternativas e índice de gabarito, texto aberto) e painel lateral de conversação com assistente (sidecar estilo copiloto). Ações de publicação, encerramento, salvamento, duplicação ou remoção de itens seguem ícones e rótulos coerentes com o estado atual. Agendamento: seletor de data e hora (calendário e hora) vinculado ao prazo de encerramento. Em arquitetura alvo, o estado estruturado completo da prova pode persistir em JSONB além das linhas normalizadas de Questao para suportar evolução do editor.
+
+Gestão de Estado e Prevenção de Perdas: Auto-save com debounce e camada de cache (ex.: Redis) permanece como requisito alvo para o editor colaborativo de longa duração.18
+
+Organização Visual: Pastas e matérias constituem taxonomia principal; gestos de arrastar e soltar para reordenar ou mover avaliações entre pastas são desejáveis em iterações futuras; no MVP a criação explícita por diálogos é suficiente.
+
+Restrição de Acesso por Prazo: Comparação UTC no servidor; bloqueio de submissão após encerramento; aluno como único perfil que inicia resolução.25
+
+Módulo 3: Comunicados
+
+Layout estilo caixa de entrada: lista à esquerda (ou tela cheia em mobile até seleção), detalhe à direita. Indicadores de não lidos; marcação de lida ao abrir. Emissão via diálogo modal: título, corpo, caixas de seleção para públicos Alunos e/ou Responsáveis (ambos permitidos). Registro de autor e timestamp. Em persistência alvo, destinatários efetivos derivam da turma e do tipo selecionado; leituras gravadas por usuário.
+
+Módulo 4: Dashboard AI
+
+Painel com cartões de resumo (totais de alunos, turmas, avaliações, médias), gráficos de linha e barras (desempenho temporal, disciplinas versus meta), e faixa de insights gerados ou simulados (alertas, tendências, sugestões de conteúdo). Dados agregados referenciam turma, disciplina e, em visões futuras, aluno individual para drill-down autorizado.
+
+Orquestração da Inteligência Artificial: Dashboards e Relatórios de Desempenho
+
+O valor estratégico emerge no pós-avaliação. Após submissão ou encerramento, correção objetiva consolida nota numérica; em seguida o pipeline LLM produz narrativa pedagógica.2
+
+Fluxos de Chamada para o LLM e Geração de Relatórios
+
+Agente Compilador de Contexto (Retriever Agent): Recupera enunciados, descritores de habilidade se existirem, gabarito e respostas do aluno.27
+
+Agente de Diagnóstico Específico (Critic/Weakness Agent): Infere natureza dos erros com prompts de pedagogia analítica.28
+
+Agente Redator do Relatório (Reporter Agent): Produz texto estruturado para família e professor.29
+
+O Relatório de Desempenho persiste em entidade dedicada (Relatorio_IA) vinculada à Submissao, com versionamento e referência a auditoria de prompt quando exigido por compliance.
+
+Dashboard de Métricas Focado em Observabilidade
+
+Métricas descritivas e preditivas em gráficos; alertas de queda de desempenho por disciplina; paridade de visibilidade entre professor e responsável conforme escopo de alunos.4
+
+Especificações de Comportamento e Histórias de Usuário (User Stories)
+
+Para a construção rigorosa das fundações do código-fonte e garantia da qualidade de software, os vetores funcionais da plataforma devem ser detalhados utilizando técnicas de Desenvolvimento Orientado a Comportamento (Behavior-Driven Development). A utilização de cenários descritos na sintaxe estruturada Gherkin garante um modelo mental unificado entre gestores de produto, engenheiros de inteligência artificial e equipes de garantia de qualidade, facilitando a automação futura de testes funcionais.34
+
+Abaixo estão definidos os épicos centrais da plataforma e instâncias críticas de interação.
+
+Épico 1: Gestão de Acesso Global e Governança de Navegação
+
+Esta macroestrutura lida com a fronteira de acesso ao sistema e os mecanismos de localização universal.36
+
+História de Usuário 1.1: Autenticação via RBAC Como um usuário com jurisdição no domínio escolar (Professor, Aluno ou Responsável), Quero autenticar-me com credenciais seguras, Para que eu acesse ferramentas coerentes com o meu perfil.7
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Autenticação bem-sucedida e roteamento diferencial de perfis
+
+Dado
+
+Que o indivíduo acessa o terminal de entrada e insere e-mail e senha válidos no sistema de contas
+
+Quando
+
+O servidor valida o hash da senha e emite sessão ou token de curta duração
+
+Então
+
+A plataforma deve associar o contexto RBAC ao usuário
+
+E
+
+Redirecionar o Professor para o painel operacional principal e o Aluno para a visão restrita de consumo e provas.
+
+
+
+História de Usuário 1.2: Busca Global Federada Como perfil docente, Quero inserir termos na barra de pesquisa superior, Para localizar alunos, materiais, avaliações e comunicados.34
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Resultados classificados por tipo de entidade
+
+Dado
+
+Que o Professor está autenticado e o índice ou consulta federada está disponível
+
+Quando
+
+Digita um termo e confirma a busca
+
+Então
+
+O backend retorna correspondências em conteúdos, avaliações e comunicados dentro do seu escopo
+
+E
+
+A UI apresenta lista agrupada com navegação direta ao registro.
+
+
+
+História de Usuário 1.3: Navegação Responsiva Como usuário em dispositivo móvel, Quero abrir a mesma árvore de módulos pela barra superior, Para acessar Conteúdo e Avaliações sem perda de paridade funcional.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Painel lateral móvel
+
+Dado
+
+Que a largura da viewport aciona o layout compacto
+
+Quando
+
+Aciono o controle de menu
+
+Então
+
+Um painel lateral deslizante exibe os mesmos itens da sidebar desktop
+
+E
+
+Ao tocar em um módulo o painel fecha e a rota correspondente carrega.
+
+
+
+História de Usuário 1.4: Tema Claro e Escuro Como usuário, Quero alternar o tema visual, Para reduzir fadiga visual em diferentes ambientes de leitura.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Persistência da preferência
+
+Dado
+
+Que estou em qualquer módulo autenticado
+
+Quando
+
+Alterno o controle de tema no cabeçalho
+
+Então
+
+A interface aplica o esquema correspondente
+
+E
+
+A preferência permanece nas visitas subsequentes do mesmo dispositivo quando suportado pela aplicação.
+
+
+
+Épico 2: Motor Generativo e Ciclo de Vida da Avaliação
+
+Este épico endereça o editor sidecar e a governança de estados da prova.21
+
+História de Usuário 2.1: Interação Híbrida de Edição (Copilot) Como Professor, Quero dialogar com o assistente lateral enquanto edito questões no painel principal, Para produzir provas com revisão humana contínua.22
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Sugestões incorporadas ao conjunto de questões
+
+Dado
+
+Que o editor dividido está aberto com uma avaliação em rascunho ou publicada editável conforme política
+
+Quando
+
+Envio instruções naturais ao assistente
+
+Então
+
+O sistema integra as questões ou alterações propostas no painel principal sem sobrescrever edição humana não solicitada
+
+E
+
+Permite desfazer ou ajustar manualmente cada item.
+
+
+
+História de Usuário 2.2: Expiração e Bloqueio de Acesso Como professor, Quero definir prazo final, Para encerrar submissões de forma consistente no tempo do servidor.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Bloqueio após instante de encerramento
+
+Dado
+
+Que a avaliação está publicada com data e hora de encerramento definidas
+
+E
+
+Um aluno autenticado abre a prova
+
+Quando
+
+O instante atual UTC ultrapassa o limite
+
+Então
+
+O estado efetivo torna-se encerrado para submissão
+
+E
+
+Controles de envio exibem indisponibilidade por prazo expirado.
+
+
+
+História de Usuário 2.3: Hierarquia Matéria, Assunto e Pasta Como professor, Quero criar matéria, assunto e pasta de avaliações, Para organizar o acervo por eixo curricular antes de criar provas.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Nova matéria e nova pasta
+
+Dado
+
+Que estou na listagem de avaliações
+
+Quando
+
+Confirmo o diálogo de nova matéria com nome válido
+
+Então
+
+O sistema cria a matéria com assunto inicial padrão
+
+E
+
+Permite adicionar pastas de avaliações dentro do assunto com nome editável.
+
+
+
+História de Usuário 2.4: Publicação e Encerramento Como professor, Quero transicionar rascunho para publicada e publicada para encerrada, Para controlar visibilidade e integridade da prova.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Transições de estado válidas
+
+Dado
+
+Que existem avaliações em rascunho
+
+Quando
+
+Publico a avaliação
+
+Então
+
+Alunos da turma escopada passam a visualizá-la conforme regras de escopo
+
+E
+
+Quando encerro, novas respostas são rejeitadas e notas consolidadas permanecem auditáveis.
+
+
+
+Épico 3: Cadeia de Observabilidade e Transparência Analítica
+
+Envolve relatórios e painel para educadores e famílias.
+
+História de Usuário 3.1: Relatório Qualitativo pós-submissão Como responsável, Quero ler parecer gerado após a entrega do dependente, Para apoiar estudo orientado em casa.3
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Persistência e notificação do relatório
+
+Dado
+
+Que o aluno concluiu a submissão
+
+Quando
+
+O backend finaliza correção objetiva e o job de IA conclui
+
+Então
+
+O relatório fica armazenado e visível aos perfis autorizados
+
+E
+
+Uma notificação pode ser emitida no painel do responsável.
+
+
+
+História de Usuário 3.2: Indicadores no Dashboard Como professor, Quero ver tendências por turma e disciplina, Para priorizar intervenção pedagógica.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Cartões e gráficos coerentes com agregações
+
+Dado
+
+Que existem submissões e notas no período
+
+Quando
+
+Abro o Dashboard AI
+
+Então
+
+Visualizo séries temporais e comparativos por disciplina
+
+E
+
+Insights destacam anomalias ou oportunidades de revisão.
+
+
+
+Épico 4: Comunicação Institucional e Materiais
+
+História de Usuário 4.1: Comunicado segmentado Como professor, Quero enviar mensagem apenas a alunos ou apenas a responsáveis ou a ambos, Para respeitar sensibilidade e expectativa de canal.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Destinatários explícitos
+
+Dado
+
+Que abro o diálogo de novo comunicado
+
+Quando
+
+Preencho título e corpo e marco ao menos um público
+
+Então
+
+O comunicado é registrado com tipos de destinatário selecionados
+
+E
+
+Usuários fora do público não o visualizam na sua caixa de entrada escopada.
+
+
+
+História de Usuário 4.2: Material didático por tipo Como aluno, Quero abrir PDF, vídeo, áudio ou nota a partir da pasta da disciplina, Para estudar com o formato adequado.
+
+Estrutura de Aceitação (Gherkin)
+
+Detalhamento Comportamental
+
+Cenário
+
+Modal de visualização
+
+Dado
+
+Que seleciono um material na lista da pasta
+
+Quando
+
+Confirmo a abertura
+
+Então
+
+O modal exibe título, metadados e corpo ou referência de mídia coerente com o tipo de anexo
+
+E
+
+Permite fechar e retornar à lista sem perder o contexto da pasta.
+
+
+
+Modelagem Lógica de Dados (Modelo de Persistência Híbrida)
+
+O desenho de arquitetura de dados requer a seleção criteriosa dos paradigmas de persistência para evitar estrangulamentos computacionais à medida que a plataforma escale. Devido às exigências contrastantes do sistema—a necessidade premente de conformidade com os princípios ACID para controlar a vinculação hierárquica entre alunos, pais e instituições, confrontada com a imperiosa necessidade de lidar com blocos massivos e mutáveis de dados não-estruturados, subprodutos da interação conversacional iterativa da IA e do estado do editor de avaliações—recomenda-se um arcabouço de banco de dados híbrido.39
+
+Um Sistema de Gerenciamento de Banco de Dados Relacional (RDBMS) com suporte nativo e indexação otimizada para objetos JSON, como PostgreSQL com tipo JSONB, constitui a escolha tática ideal.42
+
+A tabela a seguir apresenta os atributos fundamentais do esquema relacional alvo e as entidades primordiais. Nomes em notação técnica; na implementação podem ser mapeados para convenção snake_case ou camelCase conforme ORM.
+
+Entidade Principal
+
+Chave Primária e Associação (Foreign Keys)
+
+Atributos e Estruturas Analíticas Chaves
+
+Justificativa do Domínio de Negócios
+
+Instituicao
+
+id_instituicao (UUID)
+
+nome_fantasia, documento_legal opcional, configuracoes_jsonb opcional
+
+Raiz de tenant; isola dados entre escolas ou unidades contratantes.
+
+Usuario_Conta
+
+id_usuario (UUID)
+
+FK opcional id_instituicao; email único; senha_hash; tipo_perfil enum; status_conta; preferencias_ui jsonb (tema, idioma)
+
+Autenticação central e RBAC; preferências para alternador de tema e densidade de UI.
+
+Professor
+
+id_professor (UUID)
+
+FK id_usuario (1:1)
+
+registro_funcional opcional, areas_especialidade texto
+
+Amarra o indivíduo autenticado ao papel docente para escopo de turmas e autoria.
+
+Aluno
+
+id_aluno (UUID)
+
+FK id_usuario (1:1)
+
+nome_social opcional, data_nascimento, matricula_codigo opcional
+
+Identidade do discente desacoplada da matrícula ativa em turma.
+
+Responsavel
+
+id_responsavel (UUID)
+
+FK id_usuario (1:1)
+
+grau_parentesco opcional, telefone
+
+Perfil familiar para comunicados e dashboards de tutelados.
+
+Aluno_Responsavel
+
+id (UUID)
+
+FK id_aluno, FK id_responsavel; flag responsavel_principal boolean; ordem_contato int
+
+Permite múltiplos vínculos legais mantendo regra de canal principal configurável.
+
+Turma
+
+id_turma (UUID)
+
+FK id_instituicao; FK id_professor_titular opcional; nome; ano_letivo; turno opcional
+
+Âncora de coorte; painéis e comunicados referenciam turma.
+
+Matricula
+
+id_matricula (UUID)
+
+FK id_aluno, id_turma; data_inicio; data_fim nula se ativa; situacao enum
+
+Flexibiliza histórico; constraint de uma matrícula ativa por aluno no MVP.
+
+Materia_curricular
+
+id_materia (UUID)
+
+FK id_instituicao; FK id_professor_autor; nome; slug; cor_token_ui; ordem int opcional
+
+Espelha cartão de matéria na UI de avaliações; slug para rotas amigáveis.
+
+Assunto
+
+id_assunto (UUID)
+
+FK id_materia; nome; ordem int
+
+Eixo temático dentro da matéria (ex.: Álgebra).
+
+Pasta_Avaliacoes
+
+id_pasta (UUID)
+
+FK id_assunto; nome; resumo_status_texto materializado opcional
+
+Agrupa avaliações; campos agregados derivados de contagens sobre filhos.
+
+Avaliacao
+
+id_avaliacao (UUID)
+
+FK id_pasta; titulo; status enum rascunho_publicada_encerrada; publicada_em; encerrada_em; prazo_utc; payload_editor_jsonb opcional
+
+Ciclo de vida da prova; JSONB guarda estado rico do editor além das questões normalizadas.
+
+Questao
+
+id_questao (UUID)
+
+FK id_avaliacao; ordem; tipo enum multipla_escolha_texto_aberto; enunciado texto; alternativas_jsonb; indice_gabarito int nulo se aberto; peso decimal default 1
+
+Normalização para correção e relatórios por questão.
+
+Submissao
+
+id_submissao (UUID)
+
+FK id_avaliacao, id_aluno; iniciada_em; enviada_em; nota_decimal; status enum
+
+Uma submissão por aluno por avaliação; base para IA e dashboard.
+
+Resposta_questao
+
+id (UUID)
+
+FK id_submissao, id_questao; valor_jsonb ou texto; correta_flag nulo se aberto; pontos_obtidos decimal
+
+Granularidade para diagnóstico de erro e partial credit futuro.
+
+Relatorio_IA
+
+id (UUID)
+
+FK id_submissao; texto_longo; versao int; criado_em; id_job_auditoria opcional
+
+Parecer narrativo; desacoplado da submissão para versionar regenerações.
+
+Pasta_Conteudo
+
+id_pasta_conteudo (UUID)
+
+FK id_turma ou id_instituicao conforme escopo; nome_disciplina; cor_token_ui; ordem
+
+Alinha-se às pastas por disciplina do módulo Conteúdo.
+
+Material_estudo
+
+id_material (UUID)
+
+FK id_pasta_conteudo; FK id_professor_autor; titulo; descricao; tipo_anexo enum pdf_audio_imagem_video_nota; corpo_texto; url_objeto; metadados_duracao_texto; criado_em; ordem_exibicao
+
+Suporta modais de criação e visualização por tipo.
+
+Comunicado
+
+id_comunicado (UUID)
+
+FK id_professor ou id_usuario_emissor; FK id_turma escopo; titulo; corpo; criado_em
+
+Mensagem institucional ou de sala.
+
+Comunicado_destinatario
+
+id (UUID)
+
+FK id_comunicado; tipo_publico enum aluno_responsavel
+
+Segmentação explícita; linhas múltiplas quando ambos públicos.
+
+Comunicado_leitura
+
+id (UUID)
+
+FK id_comunicado, id_usuario; lido_em
+
+Rastreia inbox e contadores de leitura.
+
+Notificacao
+
+id (UUID)
+
+FK id_usuario; titulo; corpo_curto; tipo_evento; lida_flag; criado_em; link_profundo opcional
+
+Alimenta Popover do cabeçalho e futuras push notifications.
+
+
+
+Nota de consistência: Contadores exibidos nas pastas de avaliações (alunos responderam, concluídas, totais) devem ser recalculados a partir de Submissao e estado da Avaliacao ou mantidos por triggers/jobs documentados, nunca editados manualmente em divergência com as linhas fato.
+
+
+
+Matriz de Requisitos Funcionais e Não Funcionais
+
+A especificação definitiva das atribuições mecânicas (Requisitos Funcionais - RF) e as expectativas arquitetônicas de sustentação do software sob carga computacional (Requisitos Não Funcionais - RNF) garantem que as expectativas do gerenciamento de produto interajam de forma exequível com os cronogramas da engenharia. Onde um requisito descreve comportamento já demonstrado na camada de interface sem backend conectado, a implementação completa permanece dependente da arquitetura alvo descrita nas seções precedentes.
+
+Requisitos Funcionais (RF)
+
+Referência
+
+Subsistema Alocado
+
+Descrição Extensiva do Comportamento Funcional Obrigatório
+
+RF-001
+
+Global / Cabeçalho
+
+A área superior em layout de mesa deve integrar campo de busca unificada, acesso a notificações, alternador de tema e menu de perfil com identidade do usuário autenticado.
+
+RF-002
+
+Segurança / Acesso
+
+A camada de API deve impedir mutações de dados por Aluno e Responsável exceto a submissão de respostas pelo próprio aluno às suas avaliações autorizadas e ações explícitas de leitura/marcação de comunicados quando aplicável.
+
+RF-003
+
+Módulo Conteúdo
+
+O repositório didático deve organizar materiais em pastas de disciplina e suportar tipos de anexo incluindo PDF, áudio, imagem, vídeo e nota textual, com visualização em modal dedicado.
+
+RF-004
+
+Módulo Conteúdo
+
+Filtros ou busca devem restringir a lista de materiais ao contexto da pasta ou termo informado, reduzindo ruído cognitivo.
+
+RF-005
+
+Módulo Avaliações
+
+A navegação deve refletir a hierarquia Matéria, Assunto, Pasta de avaliações e lista de Avaliações com estados Rascunho, Publicada e Encerrada visivelmente distintos.
+
+RF-006
+
+Módulo Avaliações
+
+O editor deve combinar painel de questões (múltipla escolha e texto aberto) com painel de assistente conversacional para coautoria pedagógica.
+
+RF-007
+
+Módulo Avaliações
+
+A solução alvo deve prever salvamento automático com debounce e recuperação de rascunho após falha de rede; a interface deve impedir perda inadvertida quando o backend estiver disponível.
+
+RF-008
+
+Módulo Avaliações
+
+O professor deve poder criar matéria, assunto e pasta mediante diálogos ou fluxos equivalentes, gerando identificadores estáveis para roteamento.
+
+RF-009
+
+Módulo Avaliações
+
+O sistema deve impedir submissão ou alteração de respostas após o instante de encerramento ou transição para estado encerrada, validando no servidor.
+
+RF-010
+
+Módulo Comunicados
+
+O emissor deve selecionar explicitamente um ou ambos os públicos Alunos e Responsáveis; destinatários fora do escopo da turma e público não visualizam o comunicado.
+
+RF-011
+
+Módulo Comunicados
+
+Ao abrir um comunicado, o sistema deve registrar leitura por usuário em modelo persistente para suportar contadores e estado lido/não lido.
+
+RF-012
+
+Dashboard AI
+
+O painel deve exibir agregações de desempenho (cartões, séries temporais, comparativos por disciplina) e área de insights ou alertas acionáveis.
+
+RF-013
+
+Observabilidade
+
+Após submissão, o servidor deve calcular nota objetiva quando houver gabarito e persistir resultado vinculado à submissão.
+
+RF-014
+
+Observabilidade
+
+Disparar processamento assíncrono para LLM que produza relatório textual por submissão, persistido e associado a auditoria de prompt quando exigido.
+
+RF-015
+
+Global / Navegação
+
+Em viewport móvel, a navegação principal deve estar acessível via painel lateral deslizante equivalente à sidebar desktop.
+
+RF-016
+
+Global / Sidebar
+
+A sidebar desktop deve suportar recolhimento para ícones com rótulos acessíveis via dica contextual.
+
+RF-017
+
+Módulo Avaliações
+
+Questões de múltipla escolha devem suportar conjunto de alternativas e identificação do índice correto; questões abertas devem aceitar texto livre para correção manual ou IA futura.
+
+
+
+Requisitos Não Funcionais (RNF) e Práticas de Infraestrutura
+
+Na economia técnica de 2026, onde plataformas de educação fundem-se a redes neurais de peso elevado, as propriedades implícitas de resiliência e adequação arquitetônica sustentam a validade intrínseca da operação corporativa.1 O projeto do MVP repousa sob os seguintes ditames estruturais:
+
+
+
+Domínio de Infraestrutura
+
+Expectativas Críticas e Premissas de Engenharia Exigidas
+
+Arquitetura Base
+
+Optar-se-á pela construção em um modelo de Monolito Modular ao invés de um mar caótico de pequenos microsserviços no núcleo de negócio. Serviços satélites (filas de IA, armazenamento de objetos) podem evoluir de forma independente.43
+
+Desempenho e Elasticidade
+
+Interações do assistente no editor beneficiam-se de baixa latência; canais WebSocket ou streaming podem ser adotados quando o backend de IA estiver integrado. Requisições de leitura do dashboard devem ser paginadas ou agregadas para evitar varredura completa de fatos em cada renderização.
+
+Proteção, Mitigação e Zero-Trust
+
+Endpoints autenticados e autorizados por escopo de turma e instituição; TLS em trânsito; dados sensíveis cifrados em repouso conforme política; relatórios e notas acessíveis apenas a perfis e vínculos válidos.11
+
+Sustentabilidade Ética e Interoperabilidade de IA
+
+Pareceres gerados por modelo devem ser auditáveis; manter trilha de prompts de sistema e versão de modelo quando a compliance institucional exigir explainability.45
+
+Acessibilidade Digital
+
+Contraste adequado, foco visível, rótulos em controles de formulário dos diálogos, e navegação por teclado nos padrões de componente utilizados; leitor de tela deve anunciar estados de modal e notificações.46
+
+Internacionalização e Temporal
+
+Armazenar instantes em UTC; exibir conforme fuso do cliente; textos de interface preparados para futura localização adicional ao português.
+
+
+
+Esta documentação técnica de Produto e Arquitetura encapsula, com alto grau de granularidade e rigor industrial, a planta-mestra necessária para erguer a fundação da ferramenta educacional proposta, alinhada à hierarquia de avaliações, ao módulo de conteúdo por disciplinas, aos comunicados segmentados e ao painel de observabilidade. As premissas arquiteturais delineadas asseguram que o sistema opere como organizador pedagógico, canal de comunicação ético e laboratório analítico com suporte a inteligência artificial responsável, eliminando pontos cegos na trajetória de ensino quando a persistência alvo for integralmente implementada.
+
+
