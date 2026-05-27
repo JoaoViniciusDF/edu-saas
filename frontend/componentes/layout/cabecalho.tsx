@@ -16,47 +16,60 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AlternadorTema } from "@/componentes/alternador-tema"
+import { useAuth } from "@/componentes/provedores/provedor-auth"
+import type { NotificacaoItem } from "@/lib/api/dtos/dashboard"
+import type { SearchHit } from "@/lib/api/dtos/dashboard"
+import { dashboardRequests } from "@/lib/api/requests/dashboard"
 import { cn } from "@/lib/utils"
+import { useRouter } from "next/navigation"
 
-interface NotificacaoComunicado {
-  id: string
-  titulo: string
-  descricao: string
-  tempo: string
-  lida: boolean
+const LABEL_PERFIL: Record<string, string> = {
+  super_admin: "Super Admin",
+  administrador: "Administrador",
+  professor: "Professor",
+  aluno: "Aluno",
+  responsavel: "Responsável",
 }
 
-const notificacoesIniciais: NotificacaoComunicado[] = [
-  {
-    id: "1",
-    titulo: "Reuniao de pais - 2o bimestre",
-    descricao: "Comunicado enviado para responsaveis da Turma 8A.",
-    tempo: "5 min",
-    lida: false,
-  },
-  {
-    id: "2",
-    titulo: "Entrega de trabalho de Ciencias",
-    descricao: "Lembrete disparado para alunos do 9o ano.",
-    tempo: "1h",
-    lida: false,
-  },
-  {
-    id: "3",
-    titulo: "Atualizacao de calendario escolar",
-    descricao: "Comunicado ja visualizado por 82% dos destinatarios.",
-    tempo: "2h",
-    lida: true,
-  },
-]
-
 export function Cabecalho() {
-  const [notificacoes, setNotificacoes] = React.useState<NotificacaoComunicado[]>(notificacoesIniciais)
+  const { usuario, logout } = useAuth()
+  const router = useRouter()
+  const [notificacoes, setNotificacoes] = React.useState<NotificacaoItem[]>([])
+  const [busca, setBusca] = React.useState("")
+  const [resultadosBusca, setResultadosBusca] = React.useState<SearchHit[]>([])
+  const [buscaAberta, setBuscaAberta] = React.useState(false)
   const [painelAberto, setPainelAberto] = React.useState(false)
   const [larguraPainel, setLarguraPainel] = React.useState(420)
   const [arrastandoResize, setArrastandoResize] = React.useState(false)
 
-  const naoLidas = notificacoes.filter((item) => !item.lida).length
+  const naoLidas = notificacoes.filter((item) => !item.lida_flag).length
+  const iniciais = usuario?.nome_exibicao
+    ?.split(" ")
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() ?? "?"
+
+  React.useEffect(() => {
+    dashboardRequests
+      .notificacoes()
+      .then(setNotificacoes)
+      .catch(() => setNotificacoes([]))
+  }, [])
+
+  React.useEffect(() => {
+    if (busca.trim().length < 2) {
+      setResultadosBusca([])
+      return
+    }
+    const t = setTimeout(() => {
+      dashboardRequests
+        .search(busca.trim())
+        .then(setResultadosBusca)
+        .catch(() => setResultadosBusca([]))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [busca])
 
   React.useEffect(() => {
     if (!arrastandoResize) return
@@ -77,14 +90,18 @@ export function Cabecalho() {
     }
   }, [arrastandoResize])
 
-  const marcarComoLida = (notificacaoId: string) => {
+  const marcarComoLida = async (notificacaoId: string) => {
+    await dashboardRequests.marcarNotificacaoLida(notificacaoId)
     setNotificacoes((prev) =>
-      prev.map((item) => (item.id === notificacaoId ? { ...item, lida: true } : item))
+      prev.map((item) =>
+        item.id === notificacaoId ? { ...item, lida_flag: true } : item
+      )
     )
   }
 
-  const marcarTodasComoLidas = () => {
-    setNotificacoes((prev) => prev.map((item) => ({ ...item, lida: true })))
+  const marcarTodasComoLidas = async () => {
+    await dashboardRequests.marcarTodasLidas()
+    setNotificacoes((prev) => prev.map((item) => ({ ...item, lida_flag: true })))
   }
 
   return (
@@ -96,8 +113,34 @@ export function Cabecalho() {
             <Input
               type="search"
               placeholder="Buscar conteúdos, avaliações, alunos..."
+              value={busca}
+              onChange={(e) => {
+                setBusca(e.target.value)
+                setBuscaAberta(true)
+              }}
+              onFocus={() => setBuscaAberta(true)}
+              onBlur={() => setTimeout(() => setBuscaAberta(false), 200)}
               className="h-12 w-full rounded-xl border-transparent bg-secondary/50 pl-11 pr-20 text-sm placeholder:text-muted-foreground/70 transition-all focus:border-primary/30 focus:bg-card focus:shadow-soft"
             />
+            {buscaAberta && resultadosBusca.length > 0 && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-64 overflow-auto rounded-xl border border-border bg-card p-2 shadow-soft-lg">
+                {resultadosBusca.map((hit) => (
+                  <button
+                    key={`${hit.tipo}-${hit.id}`}
+                    type="button"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-secondary"
+                    onMouseDown={() => {
+                      if (hit.url_deep_link) router.push(hit.url_deep_link)
+                    }}
+                  >
+                    <p className="font-medium">{hit.titulo}</p>
+                    {hit.subtitulo && (
+                      <p className="text-xs text-muted-foreground">{hit.subtitulo}</p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
             <kbd className="pointer-events-none absolute right-3 top-1/2 hidden h-7 -translate-y-1/2 select-none items-center gap-1 rounded-lg border border-border bg-muted px-2 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
               <Command className="h-3 w-3" />K
             </kbd>
@@ -122,22 +165,23 @@ export function Cabecalho() {
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="h-11 gap-3 rounded-xl pl-2 pr-4 transition-colors hover:bg-secondary">
                 <Avatar className="h-8 w-8 ring-2 ring-primary/20">
-                  <AvatarImage src="/avatar-professor.jpg" alt="Prof. Maria Silva" />
                   <AvatarFallback className="bg-linear-to-br from-primary to-primary/80 text-sm font-semibold text-primary-foreground">
-                    MS
+                    {iniciais}
                   </AvatarFallback>
                 </Avatar>
                 <div className="hidden flex-col items-start md:flex">
-                  <span className="text-sm font-semibold">Maria Silva</span>
-                  <span className="text-xs text-muted-foreground">Professora</span>
+                  <span className="text-sm font-semibold">{usuario?.nome_exibicao ?? "Usuário"}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {usuario ? LABEL_PERFIL[usuario.perfil] ?? usuario.perfil : ""}
+                  </span>
                 </div>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56 rounded-2xl shadow-soft-lg" align="end">
               <DropdownMenuLabel className="p-4 font-normal">
                 <div className="flex flex-col space-y-1">
-                  <p className="text-sm font-semibold leading-none">Prof. Maria Silva</p>
-                  <p className="text-xs leading-none text-muted-foreground">maria.silva@escola.edu.br</p>
+                  <p className="text-sm font-semibold leading-none">{usuario?.nome_exibicao}</p>
+                  <p className="text-xs leading-none text-muted-foreground">{usuario?.email}</p>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -145,7 +189,12 @@ export function Cabecalho() {
               <DropdownMenuItem className="mx-2 cursor-pointer rounded-lg px-4 py-2.5">Configurações</DropdownMenuItem>
               <DropdownMenuItem className="mx-2 cursor-pointer rounded-lg px-4 py-2.5">Ajuda e Suporte</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="mx-2 cursor-pointer rounded-lg px-4 py-2.5 text-destructive focus:text-destructive">Sair da conta</DropdownMenuItem>
+              <DropdownMenuItem
+                className="mx-2 cursor-pointer rounded-lg px-4 py-2.5 text-destructive focus:text-destructive"
+                onClick={() => logout()}
+              >
+                Sair da conta
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -204,24 +253,26 @@ export function Cabecalho() {
                 onClick={() => marcarComoLida(notif.id)}
                 className={cn(
                   "mb-1 w-full rounded-xl border p-4 text-left transition-colors",
-                  notif.lida ? "border-transparent hover:bg-secondary/80" : "border-primary/20 bg-primary/5 hover:bg-primary/10"
+                  notif.lida_flag ? "border-transparent hover:bg-secondary/80" : "border-primary/20 bg-primary/5 hover:bg-primary/10"
                 )}
               >
                 <div className="flex items-start gap-3">
-                  {notif.lida ? (
+                  {notif.lida_flag ? (
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
                   ) : (
                     <Circle className="mt-0.5 h-4 w-4 shrink-0 fill-primary text-primary" />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <p className={cn("truncate text-sm", !notif.lida && "font-semibold")}>{notif.titulo}</p>
-                      <Badge variant={notif.lida ? "outline" : "secondary"} className="rounded-full text-[10px]">
-                        {notif.lida ? "Visto" : "Nao visto"}
+                      <p className={cn("truncate text-sm", !notif.lida_flag && "font-semibold")}>{notif.titulo}</p>
+                      <Badge variant={notif.lida_flag ? "outline" : "secondary"} className="rounded-full text-[10px]">
+                        {notif.lida_flag ? "Visto" : "Nao visto"}
                       </Badge>
                     </div>
-                    <p className="line-clamp-2 text-xs text-muted-foreground">{notif.descricao}</p>
-                    <p className="mt-1.5 text-xs text-muted-foreground/70">{notif.tempo} atrás</p>
+                    <p className="line-clamp-2 text-xs text-muted-foreground">{notif.corpo_curto}</p>
+                    {notif.criado_em && (
+                      <p className="mt-1.5 text-xs text-muted-foreground/70">{notif.criado_em}</p>
+                    )}
                   </div>
                 </div>
               </button>

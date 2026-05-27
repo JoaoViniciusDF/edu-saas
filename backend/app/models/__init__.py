@@ -1,0 +1,61 @@
+from app.models.analytics import DashboardFatoDesempenho
+from app.models.avaliacoes import (
+    Assunto,
+    Avaliacao,
+    AvaliacaoChatMensagem,
+    MateriaCurricular,
+    PastaAvaliacoes,
+    Questao,
+    RelatorioIA,
+    RespostaQuestao,
+    Submissao,
+)
+from app.models.comunicados import (
+    Comunicado,
+    ComunicadoDestinatario,
+    ComunicadoDestinatarioEfetivo,
+    ComunicadoImagem,
+    ComunicadoLeitura,
+    Notificacao,
+)
+from app.models.conteudo import MaterialEstudo, PastaConteudo, UploadBlob
+from app.models.governanca import (
+    Aluno,
+    AlunoResponsavel,
+    Instituicao,
+    Matricula,
+    Professor,
+    Responsavel,
+    Turma,
+    UsuarioConta,
+)
+
+__all__ = [
+    "Instituicao",
+    "UsuarioConta",
+    "Professor",
+    "Aluno",
+    "Responsavel",
+    "AlunoResponsavel",
+    "Turma",
+    "Matricula",
+    "MateriaCurricular",
+    "Assunto",
+    "PastaAvaliacoes",
+    "Avaliacao",
+    "Questao",
+    "Submissao",
+    "RespostaQuestao",
+    "RelatorioIA",
+    "AvaliacaoChatMensagem",
+    "PastaConteudo",
+    "MaterialEstudo",
+    "UploadBlob",
+    "Comunicado",
+    "ComunicadoImagem",
+    "ComunicadoDestinatario",
+    "ComunicadoDestinatarioEfetivo",
+    "ComunicadoLeitura",
+    "Notificacao",
+    "DashboardFatoDesempenho",
+]

@@ -1,6 +1,9 @@
 "use client"
 
 import * as React from "react"
+import { useQuery } from "@tanstack/react-query"
+import { conteudoRequests } from "@/lib/api/requests/conteudo"
+import type { MaterialResponse, PastaConteudoResponse } from "@/lib/api/dtos/conteudo"
 import { 
   FileText, 
   Headphones, 
@@ -62,17 +65,43 @@ interface MaterialEstudo {
   anexosNomes?: string[]
 }
 
-// Dados das pastas
-const pastas: Pasta[] = [
-  { id: "matematica", nome: "Matemática", cor: "from-blue-500 to-blue-600", icone: "calc", quantidadeMateriais: 12, ultimaAtualizacao: "Hoje" },
-  { id: "historia", nome: "História", cor: "from-amber-500 to-amber-600", icone: "book", quantidadeMateriais: 8, ultimaAtualizacao: "Ontem" },
-  { id: "fisica", nome: "Física", cor: "from-violet-500 to-violet-600", icone: "atom", quantidadeMateriais: 15, ultimaAtualizacao: "Hoje" },
-  { id: "quimica", nome: "Química", cor: "from-emerald-500 to-emerald-600", icone: "flask", quantidadeMateriais: 6, ultimaAtualizacao: "15/04" },
-  { id: "portugues", nome: "Português", cor: "from-rose-500 to-rose-600", icone: "text", quantidadeMateriais: 10, ultimaAtualizacao: "13/04" },
-  { id: "biologia", nome: "Biologia", cor: "from-green-500 to-green-600", icone: "leaf", quantidadeMateriais: 9, ultimaAtualizacao: "12/04" },
-  { id: "geografia", nome: "Geografia", cor: "from-cyan-500 to-cyan-600", icone: "globe", quantidadeMateriais: 7, ultimaAtualizacao: "10/04" },
-  { id: "ingles", nome: "Inglês", cor: "from-indigo-500 to-indigo-600", icone: "lang", quantidadeMateriais: 11, ultimaAtualizacao: "09/04" },
-]
+const CORES_PASTA = [
+  "from-blue-500 to-blue-600",
+  "from-amber-500 to-amber-600",
+  "from-violet-500 to-violet-600",
+  "from-emerald-500 to-emerald-600",
+  "from-rose-500 to-rose-600",
+  "from-green-500 to-green-600",
+  "from-cyan-500 to-cyan-600",
+  "from-indigo-500 to-indigo-600",
+] as const
+
+function pastaApiParaUi(p: PastaConteudoResponse, index: number, qtd: number): Pasta {
+  return {
+    id: p.id,
+    nome: p.nome_disciplina,
+    cor: p.cor_token_ui?.startsWith("from-") ? p.cor_token_ui : CORES_PASTA[index % CORES_PASTA.length],
+    icone: p.icone ?? "book",
+    quantidadeMateriais: qtd,
+    ultimaAtualizacao: "—",
+  }
+}
+
+function materialApiParaUi(m: MaterialResponse, pastaNome: string, pastaId: string): MaterialEstudo {
+  return {
+    id: m.id,
+    titulo: m.titulo,
+    descricao: m.descricao ?? "",
+    disciplina: pastaNome,
+    corDisciplina:
+      corDisciplinaPorPastaId[pastaId] ??
+      "bg-secondary text-foreground border-border",
+    tipoAnexo: m.tipo_anexo,
+    dataHora: "—",
+    conteudo: m.corpo_texto ?? undefined,
+    urlArquivo: m.url_objeto ?? undefined,
+  }
+}
 
 const corDisciplinaPorPastaId: Record<string, string> = {
   matematica: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
@@ -83,165 +112,6 @@ const corDisciplinaPorPastaId: Record<string, string> = {
   biologia: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   geografia: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
   ingles: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
-}
-
-// Dados dos materiais por pasta (estado inicial)
-const materiaisPorPastaInicial: Record<string, MaterialEstudo[]> = {
-  matematica: [
-    {
-      id: "1",
-      titulo: "Introdução às Equações de 2º Grau",
-      descricao: "Material completo sobre resolução de equações quadráticas com exercícios práticos e exemplos do cotidiano.",
-      disciplina: "Matemática",
-      corDisciplina: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-      tipoAnexo: "pdf",
-      dataHora: "Hoje, 14:30",
-      duracao: "15 páginas",
-      conteudo: "As equações de 2º grau são fundamentais na matemática e aparecem em diversos contextos do cotidiano. Neste material, você aprenderá sobre a fórmula de Bhaskara, discriminante e interpretação geométrica das soluções..."
-    },
-    {
-      id: "2",
-      titulo: "Videoaula: Funções Quadráticas",
-      descricao: "Aula completa sobre gráficos e propriedades das funções do segundo grau.",
-      disciplina: "Matemática",
-      corDisciplina: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-      tipoAnexo: "video",
-      dataHora: "Ontem, 10:00",
-      duracao: "25 min",
-      conteudo: "Nesta videoaula você aprenderá a construir gráficos de parábolas, identificar vértices, zeros da função e muito mais."
-    },
-    {
-      id: "3",
-      titulo: "Exercícios Resolvidos - Equações",
-      descricao: "Lista com 50 exercícios resolvidos passo a passo sobre equações quadráticas.",
-      disciplina: "Matemática",
-      corDisciplina: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-      tipoAnexo: "pdf",
-      dataHora: "12/04/2026",
-      duracao: "32 páginas",
-      conteudo: "Exercícios organizados por nível de dificuldade, do básico ao avançado, com resoluções detalhadas."
-    },
-  ],
-  historia: [
-    {
-      id: "4",
-      titulo: "Podcast: Revolução Francesa",
-      descricao: "Episódio especial sobre os principais eventos e personagens da Revolução Francesa.",
-      disciplina: "História",
-      corDisciplina: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-      tipoAnexo: "audio",
-      dataHora: "Hoje, 10:15",
-      duracao: "32 min",
-      conteudo: "Neste podcast, exploramos a queda da Bastilha, o papel de figuras como Robespierre e Napoleão, e as consequências duradouras da revolução."
-    },
-    {
-      id: "5",
-      titulo: "Infográfico: Linha do Tempo",
-      descricao: "Visualização cronológica dos principais eventos da história mundial.",
-      disciplina: "História",
-      corDisciplina: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-      tipoAnexo: "imagem",
-      dataHora: "Ontem, 16:00",
-      conteudo: "Linha do tempo interativa mostrando eventos desde a Antiguidade até os dias atuais."
-    },
-  ],
-  fisica: [
-    {
-      id: "6",
-      titulo: "Diagrama: Sistema Solar",
-      descricao: "Infográfico interativo mostrando a posição e características dos planetas do nosso sistema.",
-      disciplina: "Física",
-      corDisciplina: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30",
-      tipoAnexo: "imagem",
-      dataHora: "Ontem, 16:45",
-      conteudo: "Explore as características de cada planeta, suas órbitas, tamanhos relativos e curiosidades astronômicas."
-    },
-    {
-      id: "7",
-      titulo: "Videoaula: Leis de Newton",
-      descricao: "Explicação detalhada das três leis fundamentais da mecânica clássica.",
-      disciplina: "Física",
-      corDisciplina: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30",
-      tipoAnexo: "video",
-      dataHora: "13/04/2026",
-      duracao: "40 min",
-      conteudo: "As leis de Newton formam a base da mecânica clássica. Aprenda sobre inércia, força e ação-reação."
-    },
-  ],
-  quimica: [
-    {
-      id: "8",
-      titulo: "Videoaula: Reações Químicas",
-      descricao: "Demonstração prática de diferentes tipos de reações químicas em laboratório.",
-      disciplina: "Química",
-      corDisciplina: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-      tipoAnexo: "video",
-      dataHora: "Ontem, 09:00",
-      duracao: "18 min",
-      conteudo: "Veja na prática reações de combustão, oxidação, neutralização e muito mais."
-    },
-  ],
-  portugues: [
-    {
-      id: "9",
-      titulo: "Análise Literária - Dom Casmurro",
-      descricao: "Estudo aprofundado sobre a obra de Machado de Assis com questões interpretativas.",
-      disciplina: "Português",
-      corDisciplina: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-      tipoAnexo: "pdf",
-      dataHora: "15/04/2026",
-      duracao: "22 páginas",
-      conteudo: "Análise dos principais temas, personagens e técnicas narrativas utilizadas por Machado de Assis em sua obra-prima."
-    },
-    {
-      id: "10",
-      titulo: "Podcast: Modernismo Brasileiro",
-      descricao: "Discussão sobre o movimento modernista e seus principais autores.",
-      disciplina: "Português",
-      corDisciplina: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-      tipoAnexo: "audio",
-      dataHora: "10/04/2026",
-      duracao: "45 min",
-      conteudo: "Exploramos a Semana de Arte Moderna de 1922 e a revolução cultural que ela representou."
-    },
-  ],
-  biologia: [
-    {
-      id: "11",
-      titulo: "Célula Animal vs Vegetal",
-      descricao: "Comparativo visual entre os dois tipos de células eucariontes.",
-      disciplina: "Biologia",
-      corDisciplina: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-      tipoAnexo: "imagem",
-      dataHora: "11/04/2026",
-      conteudo: "Infográfico detalhado mostrando as diferenças entre células animais e vegetais, incluindo organelas exclusivas."
-    },
-  ],
-  geografia: [
-    {
-      id: "12",
-      titulo: "Mapas: Biomas Brasileiros",
-      descricao: "Coleção de mapas ilustrativos dos biomas do Brasil.",
-      disciplina: "Geografia",
-      corDisciplina: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
-      tipoAnexo: "imagem",
-      dataHora: "08/04/2026",
-      conteudo: "Explore os seis biomas brasileiros: Amazônia, Cerrado, Mata Atlântica, Caatinga, Pampa e Pantanal."
-    },
-  ],
-  ingles: [
-    {
-      id: "13",
-      titulo: "Podcast: English Conversation",
-      descricao: "Prática de conversação em inglês com situações do dia a dia.",
-      disciplina: "Inglês",
-      corDisciplina: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
-      tipoAnexo: "audio",
-      dataHora: "07/04/2026",
-      duracao: "20 min",
-      conteudo: "Diálogos em situações reais: restaurante, aeroporto, entrevista de emprego e mais."
-    },
-  ],
 }
 
 const iconesTipoAnexo = {
@@ -343,18 +213,20 @@ function VisualizacaoPastas({
 // Componente de visualização de timeline dentro da pasta
 function VisualizacaoTimeline({ 
   pastaId,
+  pastasLista,
   materiais,
   aoVoltar,
   aoAbrirMaterial,
   aoAbrirCriarNota,
 }: { 
   pastaId: string
+  pastasLista: Pasta[]
   materiais: MaterialEstudo[]
   aoVoltar: () => void
   aoAbrirMaterial: (material: MaterialEstudo) => void
   aoAbrirCriarNota: () => void
 }) {
-  const pasta = pastas.find(p => p.id === pastaId)
+  const pasta = pastasLista.find(p => p.id === pastaId)
   const [filtroAtivo, setFiltroAtivo] = React.useState("Todos")
 
   const materiaisFiltrados = filtroAtivo === "Todos" 
@@ -798,22 +670,40 @@ function ModalConteudo({
   )
 }
 
-// Componente principal
-function clonarMateriaisIniciais(): Record<string, MaterialEstudo[]> {
-  return JSON.parse(JSON.stringify(materiaisPorPastaInicial)) as Record<
-    string,
-    MaterialEstudo[]
-  >
-}
-
-export function ModuloConteudo() {
+export function ModuloConteudo({ somenteLeitura = false }: { somenteLeitura?: boolean }) {
   const [pastaAtiva, setPastaAtiva] = React.useState<string | null>(null)
   const [materialAberto, setMaterialAberto] = React.useState<MaterialEstudo | null>(null)
   const [modalAberto, setModalAberto] = React.useState(false)
   const [materiaisPorPastaState, setMateriaisPorPastaState] = React.useState<
     Record<string, MaterialEstudo[]>
-  >(() => clonarMateriaisIniciais())
+  >({})
   const [modalCriarNotaAberto, setModalCriarNotaAberto] = React.useState(false)
+
+  const { data: pastasApi = [], isLoading } = useQuery({
+    queryKey: ["conteudo", "pastas"],
+    queryFn: () => conteudoRequests.listPastas(),
+  })
+
+  const pastas: Pasta[] = React.useMemo(
+    () =>
+      pastasApi.map((p, i) =>
+        pastaApiParaUi(p, i, materiaisPorPastaState[p.id]?.length ?? 0)
+      ),
+    [pastasApi, materiaisPorPastaState]
+  )
+
+  React.useEffect(() => {
+    if (!pastaAtiva) return
+    conteudoRequests.listMateriais(pastaAtiva).then((lista) => {
+      const pasta = pastasApi.find((p) => p.id === pastaAtiva)
+      setMateriaisPorPastaState((prev) => ({
+        ...prev,
+        [pastaAtiva]: lista.map((m) =>
+          materialApiParaUi(m, pasta?.nome_disciplina ?? "Conteúdo", pastaAtiva)
+        ),
+      }))
+    })
+  }, [pastaAtiva, pastasApi])
 
   const abrirMaterial = (material: MaterialEstudo) => {
     setMaterialAberto(material)
@@ -825,12 +715,12 @@ export function ModuloConteudo() {
     setTimeout(() => setMaterialAberto(null), 200)
   }
 
-  const confirmarNovaNota = (dados: {
+  const confirmarNovaNota = async (dados: {
     titulo: string
     conteudo: string
     nomesAnexos: string[]
   }) => {
-    if (!pastaAtiva) return
+    if (!pastaAtiva || somenteLeitura) return
     const pasta = pastas.find((p) => p.id === pastaAtiva)
     const agora = new Date()
     const dataHora = agora.toLocaleString("pt-BR", {
@@ -840,29 +730,27 @@ export function ModuloConteudo() {
       hour: "2-digit",
       minute: "2-digit",
     })
-    const novo: MaterialEstudo = {
-      id: `nota-${Date.now()}`,
+    await conteudoRequests.createMaterial(pastaAtiva, {
       titulo: dados.titulo,
-      descricao:
-        dados.conteudo.slice(0, 160) +
-        (dados.conteudo.length > 160 ? "…" : ""),
-      disciplina: pasta?.nome ?? "Conteúdo",
-      corDisciplina:
-        corDisciplinaPorPastaId[pastaAtiva] ??
-        "bg-secondary text-foreground border-border",
-      tipoAnexo: "nota",
-      dataHora,
-      conteudo: dados.conteudo || undefined,
-      anexosNomes: dados.nomesAnexos.length ? dados.nomesAnexos : undefined,
-      duracao:
-        dados.nomesAnexos.length > 0
-          ? `${dados.nomesAnexos.length} anexo(s)`
-          : undefined,
-    }
+      descricao: dados.conteudo.slice(0, 160),
+      tipo_anexo: "nota",
+      corpo_texto: dados.conteudo,
+    })
+    const lista = await conteudoRequests.listMateriais(pastaAtiva)
     setMateriaisPorPastaState((prev) => ({
       ...prev,
-      [pastaAtiva]: [novo, ...(prev[pastaAtiva] ?? [])],
+      [pastaAtiva]: lista.map((m) =>
+        materialApiParaUi(m, pasta?.nome ?? "Conteúdo", pastaAtiva)
+      ),
     }))
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">
+        Carregando conteúdo...
+      </div>
+    )
   }
 
   return (
@@ -870,10 +758,11 @@ export function ModuloConteudo() {
       {pastaAtiva ? (
         <VisualizacaoTimeline
           pastaId={pastaAtiva}
+          pastasLista={pastas}
           materiais={materiaisPorPastaState[pastaAtiva] ?? []}
           aoVoltar={() => setPastaAtiva(null)}
           aoAbrirMaterial={abrirMaterial}
-          aoAbrirCriarNota={() => setModalCriarNotaAberto(true)}
+          aoAbrirCriarNota={somenteLeitura ? undefined : () => setModalCriarNotaAberto(true)}
         />
       ) : (
         <VisualizacaoPastas

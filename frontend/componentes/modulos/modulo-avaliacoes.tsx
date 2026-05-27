@@ -37,7 +37,10 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import type { AvaliacaoListaItem, StatusAvaliacao } from "@/lib/avaliacoes/dados"
+import type { AvaliacaoListaItem } from "@/lib/avaliacoes/tipos-ui"
+import type { StatusAvaliacao } from "@/lib/api/dtos/common"
+import { documentoDeTexto } from "@/lib/avaliacoes/documento"
+import { avaliacoesRequests } from "@/lib/api/requests/avaliacoes"
 import { useAvaliacoes } from "@/componentes/modulos/avaliacoes-provedor"
 import {
   Dialog,
@@ -71,78 +74,30 @@ const mensagensIniciais: MensagemChat[] = [
   },
 ]
 
-const questoesTemplate: Questao[] = [
-  {
-    id: "q1",
-    tipo: "multipla-escolha",
-    pergunta: "Qual é a fórmula de Bhaskara para encontrar as raízes de uma equação de 2º grau?",
-    alternativas: [
-      "x = (-b ± √(b² - 4ac)) / 2a",
-      "x = (b ± √(b² - 4ac)) / 2a",
-      "x = (-b ± √(b² + 4ac)) / 2a",
-      "x = (-b ± √(4ac - b²)) / 2a",
-    ],
-    respostaCorreta: 0,
-  },
-  {
-    id: "q2",
-    tipo: "multipla-escolha",
-    pergunta: "O discriminante (Δ) de uma equação de 2º grau determina:",
-    alternativas: [
-      "O valor da raiz",
-      "A quantidade e natureza das raízes",
-      "O coeficiente angular",
-      "A soma das raízes",
-    ],
-    respostaCorreta: 1,
-  },
-  {
-    id: "q3",
-    tipo: "texto-aberto",
-    pergunta:
-      "Explique com suas palavras o que acontece quando o discriminante (Δ) é igual a zero em uma equação de 2º grau.",
-  },
-]
+function questoesApiParaUi(
+  questoes: import("@/lib/api/dtos/avaliacoes").QuestaoResponse[]
+): Questao[] {
+  return questoes.map((q) => ({
+    id: q.id,
+    tipo: q.tipo === "multipla_escolha" ? "multipla-escolha" : "texto-aberto",
+    pergunta: q.enunciado,
+    alternativas: q.alternativas ?? undefined,
+    respostaCorreta: q.resposta_correta ?? undefined,
+  }))
+}
 
-const detalhesPorAvaliacaoId: Record<
-  string,
-  { tituloPainel: string; questoes: Questao[]; status: StatusAvaliacao }
-> = {
-  "f1c90946-9a84-4318-b4d6-b8c2b7f7f57d": {
-    tituloPainel: "Funções — revisão",
-    status: "rascunho",
-    questoes: questoesTemplate,
-  },
-  "c2d3e391-e2b8-4846-ba87-7f01a0b0fe53": {
-    tituloPainel: "Funções — aplicação",
-    status: "publicada",
-    questoes: questoesTemplate.slice(0, 2),
-  },
-  "2f8de84f-0350-4c47-b5ab-33387967afcf": {
-    tituloPainel: "Geometria plana",
-    status: "encerrada",
-    questoes: questoesTemplate,
-  },
-  "dd42d81c-a89d-4e8b-a5f9-41216afcef58": {
-    tituloPainel: "PA e PG — rascunho",
-    status: "rascunho",
-    questoes: questoesTemplate.slice(0, 2),
-  },
-  "f2df77f1-c032-4359-89d4-6af2b5f68e7e": {
-    tituloPainel: "Lista PA/PG",
-    status: "publicada",
-    questoes: questoesTemplate.slice(0, 1),
-  },
-  "1bf35dfc-c0ca-47e5-8901-a570a8a9e8e6": {
-    tituloPainel: "Classificação de polígonos",
-    status: "rascunho",
-    questoes: questoesTemplate.slice(0, 1),
-  },
-  "3564313b-2ab2-4996-ab20-32e2e9465d15": {
-    tituloPainel: "Leis de Newton",
-    status: "publicada",
-    questoes: questoesTemplate,
-  },
+function questoesUiParaApi(questoes: Questao[]) {
+  return questoes.map((q, i) => ({
+    id: q.id.startsWith("new-") ? null : q.id,
+    tipo: (q.tipo === "multipla-escolha" ? "multipla_escolha" : "texto_aberto") as
+      | "multipla_escolha"
+      | "texto_aberto",
+    ordem: i + 1,
+    enunciado: q.pergunta,
+    conteudo: documentoDeTexto(q.pergunta),
+    alternativas: q.alternativas ?? null,
+    resposta_correta: q.respostaCorreta ?? null,
+  }))
 }
 
 function badgeStatus(status: StatusAvaliacao) {
@@ -348,8 +303,6 @@ export function ModuloAvaliacoes({
 
   React.useEffect(() => {
     if (!avaliacaoId || !materiaId || !conteudoId) return
-    const ctx = obterContextoRota(materiaId, conteudoId)
-    if (!ctx) return
 
     if (avaliacaoId === "nova") {
       setModoEdicao(true)
@@ -359,34 +312,58 @@ export function ModuloAvaliacoes({
       return
     }
 
-    const av = ctx.conteudo.avaliacoes.find((item) => item.id === avaliacaoId)
-    if (!av) return
+    avaliacoesRequests.getAvaliacao(avaliacaoId).then((det) => {
+      const podeEditar = det.status === "rascunho"
+      setModoEdicao(podeEditar)
+      setTituloAvaliacao(det.titulo)
+      setQuestoes(questoesApiParaUi(det.questoes))
+      if (det.prazo_utc) setDataEntrega(new Date(det.prazo_utc))
+      setMensagens([
+        ...mensagensIniciais,
+        {
+          id: "ia-stub",
+          tipo: "assistente",
+          conteudo: podeEditar
+            ? "Assistente IA em breve — edição manual disponível."
+            : "Esta avaliação está em modo leitura. Apenas rascunhos podem ser editados.",
+        },
+      ])
+    })
+  }, [avaliacaoId, materiaId, conteudoId])
 
-    const detalhes = detalhesPorAvaliacaoId[av.id]
-    const podeEditar = av.status === "rascunho"
-    setModoEdicao(podeEditar)
-    setTituloAvaliacao(detalhes?.tituloPainel ?? av.titulo)
-    const baseQuestoes = detalhes?.questoes ?? questoesTemplate
-    setQuestoes(
-      baseQuestoes.map((q) => ({
-        ...q,
-        alternativas: q.alternativas ? [...q.alternativas] : undefined,
-        id: `${av.id}-${q.id}`,
-      }))
-    )
-    setMensagens([
-      ...mensagensIniciais,
-      ...(podeEditar
-        ? []
-        : [
-            {
-              id: "lock",
-              tipo: "assistente" as const,
-              conteudo: "Esta avaliação está em modo leitura. Apenas rascunhos podem ser editados.",
-            },
-          ]),
-    ])
-  }, [avaliacaoId, materiaId, conteudoId, obterContextoRota])
+  const garantirAvaliacaoId = async (): Promise<string | null> => {
+    if (!contextoConteudo || !materiaId || !conteudoId) return null
+    if (avaliacaoId && avaliacaoId !== "nova") return avaliacaoId
+    const criada = await avaliacoesRequests.createAvaliacao(contextoConteudo.conteudo.id, {
+      titulo: tituloAvaliacao.trim() || "Nova avaliação",
+      prazo_utc: dataEntrega?.toISOString(),
+    })
+    router.replace(`/avaliacoes/${materiaId}/${conteudoId}/${criada.id}`)
+    return criada.id
+  }
+
+  const salvarRascunho = async () => {
+    if (!modoEdicao) return
+    const id = await garantirAvaliacaoId()
+    if (!id) return
+    await avaliacoesRequests.patchAvaliacao(id, { titulo: tituloAvaliacao })
+    await avaliacoesRequests.replaceQuestoes(id, {
+      questoes: questoesUiParaApi(questoes),
+    })
+    await avaliacoesRequests.salvarRascunho(id)
+  }
+
+  const publicarAvaliacao = async () => {
+    if (!modoEdicao) return
+    const id = await garantirAvaliacaoId()
+    if (!id) return
+    await avaliacoesRequests.patchAvaliacao(id, { titulo: tituloAvaliacao })
+    await avaliacoesRequests.replaceQuestoes(id, {
+      questoes: questoesUiParaApi(questoes),
+    })
+    await avaliacoesRequests.publicar(id)
+    setModoEdicao(false)
+  }
 
   const copiarLink = async (url: string) => {
     if (!navigator?.clipboard) return
@@ -398,18 +375,14 @@ export function ModuloAvaliacoes({
     setMensagens((prev) => [
       ...prev,
       { id: Date.now().toString(), tipo: "usuario", conteudo: inputMensagem },
+      {
+        id: `${Date.now()}-ia`,
+        tipo: "assistente",
+        conteudo:
+          "Assistente IA em breve. Use o editor manual para montar questões e publicar a prova.",
+      },
     ])
     setInputMensagem("")
-    setTimeout(() => {
-      setMensagens((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          tipo: "assistente" as const,
-          conteudo: "Solicitação recebida. Vou ajustar a prova com base no seu pedido.",
-        },
-      ])
-    }, 700)
   }
 
   const adicionarQuestao = () => {
@@ -471,10 +444,11 @@ export function ModuloAvaliacoes({
             onClick={() => {
               if (!pendenciaNovaPasta) return
               const { materiaId: mid, assuntoId: aid } = pendenciaNovaPasta
-              const novoId = adicionarConteudoNoAssunto(mid, aid, nomeNovaPasta)
-              setPendenciaNovaPasta(null)
-              setNomeNovaPasta("")
-              if (novoId) router.push(`/avaliacoes/${mid}/${novoId}`)
+              void adicionarConteudoNoAssunto(mid, aid, nomeNovaPasta).then((novoId) => {
+                setPendenciaNovaPasta(null)
+                setNomeNovaPasta("")
+                if (novoId) router.push(`/avaliacoes/${mid}/${novoId}`)
+              })
             }}
           >
             Criar e abrir
@@ -722,7 +696,13 @@ export function ModuloAvaliacoes({
         </div>
 
         <div className="flex flex-1 flex-wrap items-center gap-2 sm:gap-3">
-          <Button variant="outline" size="sm" className="h-10 gap-2 rounded-xl text-xs sm:text-sm" disabled={!modoEdicao}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-10 gap-2 rounded-xl text-xs sm:text-sm"
+            disabled={!modoEdicao}
+            onClick={() => void salvarRascunho()}
+          >
             <Save className="h-4 w-4" />
             <span className="hidden sm:inline">Salvar</span> rascunho
           </Button>
@@ -754,7 +734,11 @@ export function ModuloAvaliacoes({
               />
             </PopoverContent>
           </Popover>
-          <Button className="h-10 gap-2 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-xs shadow-soft sm:text-sm" disabled={!modoEdicao}>
+          <Button
+            className="h-10 gap-2 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-xs shadow-soft sm:text-sm"
+            disabled={!modoEdicao}
+            onClick={() => void publicarAvaliacao()}
+          >
             <CheckCircle2 className="h-4 w-4" />
             Publicar
           </Button>

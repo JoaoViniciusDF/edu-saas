@@ -3,16 +3,14 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { 
-  BookOpen, 
-  ClipboardCheck, 
-  Megaphone, 
-  BarChart3,
+import {
   ChevronLeft,
   ChevronRight,
   GraduationCap,
   Menu
 } from "lucide-react"
+import { useAuth } from "@/componentes/provedores/provedor-auth"
+import { navPorPerfil, type ItemNav } from "@/lib/auth/nav-items"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,29 +25,21 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 
-interface ItemNavegacao {
-  id: string
-  nome: string
-  href: string
-  icone: React.ReactNode
-}
-
-const itensNavegacao: ItemNavegacao[] = [
-  { id: "dashboard", nome: "Dashboard", href: "/dashboard", icone: <BarChart3 className="h-5 w-5" /> },
-  { id: "conteudo", nome: "Conteúdo", href: "/conteudo", icone: <BookOpen className="h-5 w-5" /> },
-  { id: "avaliacoes", nome: "Avaliações", href: "/avaliacoes", icone: <ClipboardCheck className="h-5 w-5" /> },
-  { id: "comunicados", nome: "Comunicados", href: "/comunicados", icone: <Megaphone className="h-5 w-5" /> },
-]
-
 function caminhoAtivo(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
-function ConteudoNavegacao({ 
+function ConteudoNavegacao({
   pathname,
+  itensNavegacao,
   recolhido = false,
-  aoFechar
-}: { pathname: string; recolhido?: boolean; aoFechar?: () => void }) {
+  aoFechar,
+}: {
+  pathname: string
+  itensNavegacao: ItemNav[]
+  recolhido?: boolean
+  aoFechar?: () => void
+}) {
   return (
     <TooltipProvider delayDuration={0}>
       <div className="flex h-full flex-col">
@@ -133,6 +123,8 @@ function ConteudoNavegacao({
 
 export function BarraLateral() {
   const pathname = usePathname()
+  const { usuario } = useAuth()
+  const itensNavegacao = navPorPerfil(usuario?.perfil)
   const [recolhido, setRecolhido] = React.useState(false)
   const [sheetAberto, setSheetAberto] = React.useState(false)
 
@@ -147,8 +139,9 @@ export function BarraLateral() {
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-72 p-0">
-            <ConteudoNavegacao 
+            <ConteudoNavegacao
               pathname={pathname}
+              itensNavegacao={itensNavegacao}
               aoFechar={() => setSheetAberto(false)}
             />
           </SheetContent>
@@ -168,8 +161,9 @@ export function BarraLateral() {
           recolhido ? "w-20" : "w-72"
         )}
       >
-        <ConteudoNavegacao 
+        <ConteudoNavegacao
           pathname={pathname}
+          itensNavegacao={itensNavegacao}
           recolhido={recolhido}
         />
 

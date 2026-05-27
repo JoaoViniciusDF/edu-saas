@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, Manrope } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import { ProvedorAuth, GuardAuth } from '@/componentes/provedores/provedor-auth'
+import { ProvedorQuery } from '@/componentes/provedores/provedor-query'
 import { ProvedorTema } from '@/componentes/provedores/provedor-tema'
+import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
 
 const inter = Inter({ 
@@ -58,14 +61,19 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${inter.variable} ${manrope.variable}`} suppressHydrationWarning>
       <body className="font-sans antialiased bg-background min-h-screen text-[15px] tracking-[-0.01em]">
-        <ProvedorTema
-          attribute="class"
-          defaultTheme="light"
-          enableSystem={false}
-          disableTransitionOnChange
-        >
-          {children}
-        </ProvedorTema>
+        <ProvedorQuery>
+          <ProvedorAuth>
+            <ProvedorTema
+              attribute="class"
+              defaultTheme="light"
+              enableSystem={false}
+              disableTransitionOnChange
+            >
+              <GuardAuth>{children}</GuardAuth>
+              <Toaster />
+            </ProvedorTema>
+          </ProvedorAuth>
+        </ProvedorQuery>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

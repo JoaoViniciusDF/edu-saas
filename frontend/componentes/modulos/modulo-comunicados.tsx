@@ -1,6 +1,10 @@
 "use client"
 
 import * as React from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { comunicadosRequests } from "@/lib/api/requests/comunicados"
+import { leituraRequests } from "@/lib/api/requests/configuracoes"
+import type { ComunicadoListItem, ComunicadoDetail } from "@/lib/api/dtos/comunicados"
 import {
   ArrowLeft,
   Check,
@@ -54,115 +58,37 @@ interface Comunicado {
   imagens: string[]
 }
 
-const turmasMock: Destinatario[] = [
-  { id: "turma-8a", tipo: "turma", nome: "Turma 8A" },
-  { id: "turma-8b", tipo: "turma", nome: "Turma 8B" },
-  { id: "turma-9a", tipo: "turma", nome: "Turma 9A" },
-]
-
-const alunosMock: Destinatario[] = [
-  { id: "aluno-ana", tipo: "aluno", nome: "Ana Souza" },
-  { id: "aluno-joao", tipo: "aluno", nome: "Joao Lima" },
-  { id: "aluno-camila", tipo: "aluno", nome: "Camila Rocha" },
-  { id: "aluno-pedro", tipo: "aluno", nome: "Pedro Costa" },
-]
-
-const responsaveisMock: Destinatario[] = [
-  { id: "resp-maria", tipo: "responsavel", nome: "Maria Souza (resp. Ana)" },
-  { id: "resp-paulo", tipo: "responsavel", nome: "Paulo Lima (resp. Joao)" },
-  { id: "resp-lucia", tipo: "responsavel", nome: "Lucia Rocha (resp. Camila)" },
-]
-
-const comunicadosIniciais: Comunicado[] = [
-  {
-    id: "1",
-    titulo: "Reuniao de pais - 2o bimestre",
-    conteudo: `Prezados pais e responsaveis,
-
-Convidamos todos para a reuniao de pais referente ao 2o bimestre letivo, que ocorrera no dia 20 de abril de 2026, as 19h, no auditorio da escola.
-
-Pautas:
-- Apresentacao do desempenho academico
-- Calendario de avaliacoes
-- Projetos interdisciplinares
-- Informes gerais
-
-Contamos com a presenca de todos!
-
-Atenciosamente,
-Coordenacao pedagogica`,
-    destinatarios: [responsaveisMock[0], turmasMock[0]],
-    dataHora: "Hoje, 10:30",
-    lido: false,
-    autor: "Coord. Pedagogica",
-    status: "publicado",
+function listaParaComunicado(item: ComunicadoListItem): Comunicado {
+  return {
+    id: item.id,
+    titulo: item.titulo,
+    conteudo: item.preview_corpo ?? "",
+    destinatarios: [],
+    dataHora: item.publicado_em ?? "—",
+    lido: item.lido,
+    autor: "—",
+    status: item.status,
     imagens: [],
-  },
-  {
-    id: "2",
-    titulo: "Entrega de trabalho de Ciencias",
-    conteudo: `Caros alunos,
+  }
+}
 
-Lembramos que o prazo para entrega do trabalho sobre Ecossistemas Brasileiros e dia 18/04.
-
-Requisitos:
-- Minimo de 5 paginas
-- Incluir imagens e graficos
-- Capa padronizada
-- Entregar em formato PDF
-
-Duvidas podem ser enviadas pelo chat da plataforma.
-
-Prof. Carlos Mendes`,
-    destinatarios: [alunosMock[1], alunosMock[3]],
-    dataHora: "Ontem, 14:15",
-    lido: true,
-    autor: "Prof. Carlos",
-    status: "publicado",
-    imagens: [],
-  },
-  {
-    id: "3",
-    titulo: "Atualizacao do calendario escolar",
-    conteudo: `Informamos a todos que houve alteracoes no calendario escolar:
-
-- 21/04 - Feriado de Tiradentes (nao havera aula)
-- 22/04 - Recesso escolar
-- 23/04 - Retorno normal das atividades
-
-Aproveitem para descansar e revisar os conteudos!
-
-Secretaria escolar`,
-    destinatarios: [turmasMock[1], responsaveisMock[1], responsaveisMock[2]],
-    dataHora: "15/04/2026",
-    lido: true,
-    autor: "Secretaria",
-    status: "publicado",
-    imagens: [],
-  },
-  {
-    id: "4",
-    titulo: "Olimpiada de Matematica - inscricoes",
-    conteudo: `As inscricoes para a Olimpiada Brasileira de Matematica estao abertas!
-
-Interessados devem procurar o professor de matematica ate o dia 25/04.
-
-Premiacao:
-- 1o lugar: Medalha de ouro + bolsa de estudos
-- 2o lugar: Medalha de prata
-- 3o lugar: Medalha de bronze
-
-Boa sorte a todos os participantes!`,
-    destinatarios: [alunosMock[0], alunosMock[2], turmasMock[2]],
-    dataHora: "14/04/2026",
-    lido: false,
-    autor: "Prof. Ana",
-    status: "publicado",
-    imagens: [],
-  },
-]
-
-const catalogoDestinatarios = [...turmasMock, ...alunosMock, ...responsaveisMock]
+function detalheParaComunicado(d: ComunicadoDetail): Comunicado {
+  return {
+    id: d.id,
+    titulo: d.titulo,
+    conteudo: d.corpo,
+    destinatarios: d.destinatarios.map((x) => ({
+      id: x.id,
+      tipo: x.tipo,
+      nome: `${x.tipo} ${x.id.slice(0, 8)}`,
+    })),
+    dataHora: d.publicado_em ?? "—",
+    lido: d.lido,
+    autor: "—",
+    status: d.status,
+    imagens: d.imagens_urls,
+  }
+}
 
 function badgeTipo(tipo: Destinatario["tipo"]) {
   if (tipo === "aluno") {
@@ -196,7 +122,28 @@ function rotuloStatus(status: Comunicado["status"]) {
 }
 
 export function ModuloComunicados() {
-  const [comunicados, setComunicados] = React.useState<Comunicado[]>(comunicadosIniciais)
+  const qc = useQueryClient()
+  const { data: listaApi = [], isLoading } = useQuery({
+    queryKey: ["comunicados"],
+    queryFn: () => comunicadosRequests.list(),
+  })
+  const { data: turmas = [] } = useQuery({
+    queryKey: ["turmas"],
+    queryFn: () => leituraRequests.listTurmas(),
+  })
+  const catalogoDestinatarios: Destinatario[] = React.useMemo(
+    () =>
+      turmas.map((t) => ({
+        id: t.id,
+        tipo: "turma" as const,
+        nome: t.nome,
+      })),
+    [turmas]
+  )
+  const [comunicados, setComunicados] = React.useState<Comunicado[]>([])
+  React.useEffect(() => {
+    setComunicados(listaApi.map(listaParaComunicado))
+  }, [listaApi])
   const [comunicadoSelecionado, setComunicadoSelecionado] = React.useState<Comunicado | null>(null)
   const [dialogAberto, setDialogAberto] = React.useState(false)
   const [buscaDestinatario, setBuscaDestinatario] = React.useState("")
@@ -207,12 +154,16 @@ export function ModuloComunicados() {
     destinatarios: [] as Destinatario[],
   })
 
-  const selecionarComunicado = (comunicado: Comunicado) => {
-    setComunicadoSelecionado(comunicado)
-    if (!comunicado.lido) {
+  const selecionarComunicado = async (comunicado: Comunicado) => {
+    const detalhe = await comunicadosRequests.get(comunicado.id)
+    const completo = detalheParaComunicado(detalhe)
+    setComunicadoSelecionado(completo)
+    if (!completo.lido) {
+      await comunicadosRequests.marcarLido(completo.id)
       setComunicados((prev) =>
-        prev.map((item) => (item.id === comunicado.id ? { ...item, lido: true } : item))
+        prev.map((item) => (item.id === completo.id ? { ...item, lido: true } : item))
       )
+      void qc.invalidateQueries({ queryKey: ["comunicados"] })
     }
   }
 
@@ -222,26 +173,29 @@ export function ModuloComunicados() {
     setBuscaDestinatario("")
   }
 
-  const criarComunicado = (status: Comunicado["status"]) => {
+  const criarComunicado = async (status: Comunicado["status"]) => {
     const possuiConteudo = Boolean(novoComunicado.conteudo.trim()) || imagensTemporarias.length > 0
     if (!novoComunicado.titulo.trim() || !possuiConteudo || novoComunicado.destinatarios.length === 0) return
 
-    const novo: Comunicado = {
-      id: Date.now().toString(),
+    const body = {
       titulo: novoComunicado.titulo,
-      conteudo: novoComunicado.conteudo,
-      destinatarios: novoComunicado.destinatarios,
-      dataHora: "Agora",
-      lido: status === "rascunho",
-      autor: "Prof. Maria",
-      status,
-      imagens: imagensTemporarias,
+      corpo: novoComunicado.conteudo,
+      imagens_urls: imagensTemporarias,
+      destinatarios: novoComunicado.destinatarios.map((d) => ({
+        tipo: d.tipo,
+        id: d.id,
+      })),
+      status_inicial: status,
     }
-
-    setComunicados((prev) => [novo, ...prev])
+    let detalhe = await comunicadosRequests.create(body)
+    if (status === "publicado") {
+      detalhe = await comunicadosRequests.publicar(detalhe.id)
+    }
+    const novo = detalheParaComunicado(detalhe)
     setComunicadoSelecionado(novo)
     resetFormulario()
     setDialogAberto(false)
+    void qc.invalidateQueries({ queryKey: ["comunicados"] })
   }
 
   const adicionarDestinatario = (destinatario: Destinatario) => {
@@ -287,6 +241,14 @@ export function ModuloComunicados() {
 
   const naoLidos = comunicados.filter((c) => !c.lido).length
   const possuiConteudoValido = Boolean(novoComunicado.conteudo.trim()) || imagensTemporarias.length > 0
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">
+        Carregando comunicados...
+      </div>
+    )
+  }
 
   return (
     <div className="h-[calc(100vh-5rem)]">

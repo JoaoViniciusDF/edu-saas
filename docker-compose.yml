@@ -1,17 +1,25 @@
+# Stack completa: db + backend + frontend
+# Uso: cp .env.example .env  &&  docker compose up --build
+
+name: edu-saas
+
 services:
   db:
-    image: postgres:15
+    image: postgres:16
+    container_name: edusaas-db
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: vestra
-      POSTGRES_USER: vestra
-      POSTGRES_PASSWORD: vestra
+      POSTGRES_DB: ${POSTGRES_DB:-edusaas}
+      POSTGRES_USER: ${POSTGRES_USER:-edusaas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edusaas}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vestra -d vestra"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edusaas} -d ${POSTGRES_DB:-edusaas}"]
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 10s
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5434}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -19,13 +27,30 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
+    container_name: edusaas-backend
+    restart: unless-stopped
     working_dir: /app
     volumes:
       - ./backend:/app
-    env_file:
-      - ./backend/.env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edusaas}:${POSTGRES_PASSWORD:-edusaas}@db:5432/${POSTGRES_DB:-edusaas}
+      APP_ENV: ${APP_ENV:-development}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-edusaas-dev}
+      JWT_ACCESS_MINUTES: ${JWT_ACCESS_MINUTES:-30}
+      JWT_REFRESH_DAYS: ${JWT_REFRESH_DAYS:-7}
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    command: >
+      sh -c "alembic upgrade head &&
+      python -m scripts.seed &&
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       db:
         condition: service_healthy
@@ -34,20 +59,28 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
+    container_name: edusaas-frontend
+    restart: unless-stopped
     working_dir: /app
-    env_file:
-      - ./frontend/.env.example
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      API_URL: http://backend:8000
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
     command: >
       sh -c "if [ ! -x node_modules/.bin/next ]; then npm ci; fi &&
-      npm run dev -- --hostname 0.0.0.0 --port 3000"
+      exec npm run dev -- --hostname 0.0.0.0 --port 3000"
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3001}:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
   frontend_node_modules:
+  frontend_next:
