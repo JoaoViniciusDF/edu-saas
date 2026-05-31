@@ -1,4 +1,5 @@
 import type { TipoPerfil } from "@/lib/api/dtos/common"
+import type { UserMe } from "@/lib/api/dtos/auth"
 
 export const ROTA_HOME_POR_PERFIL: Record<TipoPerfil, string> = {
   super_admin: "/super-admin",
@@ -14,6 +15,10 @@ const PREFIXOS_SUPER = ["/super-admin"]
 const PREFIXOS_CONFIG = ["/configuracoes"]
 
 const CONFIG_APENAS_ADMIN = ["/configuracoes/professores", "/configuracoes/instituicao"]
+
+export function perfilEfetivo(usuario: UserMe | null | undefined): TipoPerfil | undefined {
+  return usuario?.perfil
+}
 
 export function configuracaoPermitida(pathname: string, perfil: TipoPerfil): boolean {
   if (!PREFIXOS_CONFIG.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {

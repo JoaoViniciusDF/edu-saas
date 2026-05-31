@@ -22,7 +22,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="EduSaaS API",
-    version="0.2.0",
+    version=settings.app_version,
     docs_url="/docs" if settings.app_env == "development" else None,
     openapi_url="/openapi.json",
     lifespan=lifespan,
@@ -49,14 +49,27 @@ async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
     )
 
 
-app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_router)
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    db_status = "connected"
+def health() -> JSONResponse:
+    db_ok = False
+    latency_ms = 0.0
     try:
-        check_database_connection()
+        _, latency_ms = check_database_connection()
+        db_ok = True
     except Exception:
-        db_status = "disconnected"
-    return {"status": "ok", "database": db_status}
+        db_ok = False
+
+    database = "connected" if db_ok else "disconnected"
+    status = "ok" if db_ok else "degraded"
+    body = {
+        "status": status,
+        "api": "ok",
+        "database": database,
+        "latency_ms": latency_ms,
+        "version": settings.app_version,
+    }
+    code = 200 if db_ok else 503
+    return JSONResponse(status_code=code, content=body)

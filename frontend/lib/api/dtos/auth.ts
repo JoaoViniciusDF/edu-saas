@@ -1,5 +1,11 @@
 import type { TipoPerfil } from "./common"
 
+export interface ImpersonadorInfo {
+  usuario_id: string
+  email: string
+  nome_exibicao: string
+}
+
 export interface LoginRequest {
   email: string
   senha: string
@@ -15,6 +21,7 @@ export interface UserMe {
   professor_id?: string | null
   aluno_id?: string | null
   responsavel_id?: string | null
+  impersonador?: ImpersonadorInfo | null
 }
 
 export interface LoginResponse {

@@ -26,7 +26,8 @@ export default function ProfessoresConfigPage() {
         { name: "senha", label: "Senha", type: "password" },
       ]}
       onCriar={async (dados) => {
-        await cadastrosRequests.createProfessor({
+        await cadastrosRequests.createUsuario({
+          tipo_perfil: "professor",
           nome_exibicao: dados.nome_exibicao,
           email: dados.email,
           senha: dados.senha,

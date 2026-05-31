@@ -6,6 +6,7 @@ import type { UserMe } from "@/lib/api/dtos/auth"
 import { authRequests } from "@/lib/api/requests/configuracoes"
 import {
   ROTA_HOME_POR_PERFIL,
+  perfilEfetivo,
   rotaPermitidaParaPerfil,
 } from "@/lib/auth/rotas-por-perfil"
 
@@ -64,8 +65,9 @@ export function ProvedorAuth({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (!usuario || pathname === "/login" || carregando) return
-    if (!rotaPermitidaParaPerfil(pathname, usuario.perfil)) {
-      router.replace(ROTA_HOME_POR_PERFIL[usuario.perfil])
+    const perfil = perfilEfetivo(usuario)
+    if (!perfil || !rotaPermitidaParaPerfil(pathname, perfil)) {
+      router.replace(ROTA_HOME_POR_PERFIL[perfil ?? usuario.perfil])
     }
   }, [usuario, pathname, carregando, router])
 

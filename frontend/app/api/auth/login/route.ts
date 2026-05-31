@@ -8,7 +8,7 @@ import { COOKIE_ACCESS, COOKIE_REFRESH, cookieOptions } from "@/lib/api/session"
 export async function POST(request: Request) {
   const body = (await request.json()) as LoginRequest
   try {
-    const data = await apiRequest<LoginResponse>("/auth/login", {
+    const data = await apiRequest<LoginResponse>("/configuracoes/autenticar", {
       method: "POST",
       body,
     })

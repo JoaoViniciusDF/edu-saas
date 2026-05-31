@@ -34,6 +34,8 @@ type ListaCadastroProps<T> = {
   carregando?: boolean
   camposCriar: { name: string; label: string; type?: string }[]
   onCriar: (dados: Record<string, string>) => Promise<void>
+  acoesExtras?: (item: T) => React.ReactNode
+  ocultarCriar?: boolean
 }
 
 export function ListaCadastro<T extends { id: string }>({
@@ -43,6 +45,8 @@ export function ListaCadastro<T extends { id: string }>({
   carregando,
   camposCriar,
   onCriar,
+  acoesExtras,
+  ocultarCriar,
 }: ListaCadastroProps<T>) {
   const [aberto, setAberto] = React.useState(false)
   const [form, setForm] = React.useState<Record<string, string>>({})
@@ -71,10 +75,12 @@ export function ListaCadastro<T extends { id: string }>({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{titulo}</h2>
-        <Button className="rounded-xl gap-2" onClick={() => setAberto(true)}>
-          <Plus className="h-4 w-4" />
-          Novo
-        </Button>
+        {!ocultarCriar && (
+          <Button className="rounded-xl gap-2" onClick={() => setAberto(true)}>
+            <Plus className="h-4 w-4" />
+            Novo
+          </Button>
+        )}
       </div>
       <div className="rounded-2xl border border-border/50">
         <Table>
@@ -83,12 +89,16 @@ export function ListaCadastro<T extends { id: string }>({
               {colunas.map((c) => (
                 <TableHead key={c.key}>{c.header}</TableHead>
               ))}
+              {acoesExtras && <TableHead>Ações</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {itens.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={colunas.length} className="text-muted-foreground">
+                <TableCell
+                  colSpan={colunas.length + (acoesExtras ? 1 : 0)}
+                  className="text-muted-foreground"
+                >
                   Nenhum registro.
                 </TableCell>
               </TableRow>
@@ -98,6 +108,7 @@ export function ListaCadastro<T extends { id: string }>({
                   {colunas.map((c) => (
                     <TableCell key={c.key}>{c.render(item)}</TableCell>
                   ))}
+                  {acoesExtras && <TableCell>{acoesExtras(item)}</TableCell>}
                 </TableRow>
               ))
             )}
@@ -105,6 +116,7 @@ export function ListaCadastro<T extends { id: string }>({
         </Table>
       </div>
 
+      {!ocultarCriar && (
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
@@ -136,6 +148,7 @@ export function ListaCadastro<T extends { id: string }>({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      )}
     </div>
   )
 }

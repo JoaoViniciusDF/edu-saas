@@ -26,7 +26,8 @@ export default function AlunosConfigPage() {
         { name: "senha", label: "Senha", type: "password" },
       ]}
       onCriar={async (dados) => {
-        await cadastrosRequests.createAluno({
+        await cadastrosRequests.createUsuario({
+          tipo_perfil: "aluno",
           nome_exibicao: dados.nome_exibicao,
           email: dados.email,
           senha: dados.senha,

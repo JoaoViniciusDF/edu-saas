@@ -24,6 +24,7 @@ class CurrentUser:
     professor_id: uuid.UUID | None = None
     aluno_id: uuid.UUID | None = None
     responsavel_id: uuid.UUID | None = None
+    impersonator_id: uuid.UUID | None = None
 
     @property
     def id(self) -> uuid.UUID:
@@ -75,11 +76,15 @@ def get_current_user_optional(
     if not usuario:
         return None
     prof_id, aluno_id, resp_id = _load_profile_ids(db, usuario)
+    impersonator_id = None
+    if payload.get("impersonator_id"):
+        impersonator_id = uuid.UUID(payload["impersonator_id"])
     return CurrentUser(
         usuario=usuario,
         professor_id=prof_id,
         aluno_id=aluno_id,
         responsavel_id=resp_id,
+        impersonator_id=impersonator_id,
     )
 
 

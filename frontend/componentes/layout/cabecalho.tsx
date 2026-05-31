@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AlternadorTema } from "@/componentes/alternador-tema"
+import { FaixaImpersonacao } from "@/componentes/layout/faixa-impersonacao"
 import { useAuth } from "@/componentes/provedores/provedor-auth"
 import type { NotificacaoItem } from "@/lib/api/dtos/dashboard"
 import type { SearchHit } from "@/lib/api/dtos/dashboard"
@@ -106,6 +107,7 @@ export function Cabecalho() {
 
   return (
     <>
+      <FaixaImpersonacao />
       <header className="relative z-0 hidden h-20 items-center justify-between border-b border-border/50 bg-card/50 px-8 backdrop-blur-xl lg:flex">
         <div className="flex max-w-xl flex-1 items-center">
           <div className="group relative w-full">

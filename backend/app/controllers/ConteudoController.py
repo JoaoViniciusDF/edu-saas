@@ -19,7 +19,7 @@ from app.schemas.conteudo import (
 )
 from app.services.conteudo_service import ConteudoService
 
-router = APIRouter(tags=["Conteúdo"])
+router = APIRouter(prefix="/conteudo", tags=["Conteúdo"])
 
 EscritaUser = Annotated[CurrentUser, Depends(require_perfis(TipoPerfil.professor, TipoPerfil.administrador))]
 
@@ -28,59 +28,61 @@ def _svc(db: DbSession) -> ConteudoService:
     return ConteudoService(db)
 
 
-@router.get("/conteudo/pastas", response_model=list[PastaConteudoResponse])
-def list_pastas(user: AuthUser, db: DbSession) -> list[PastaConteudoResponse]:
+@router.get("/consultar-pastas", response_model=list[PastaConteudoResponse])
+def consultar_pastas(user: AuthUser, db: DbSession) -> list[PastaConteudoResponse]:
     return _svc(db).list_pastas(user)
 
 
-@router.post("/conteudo/pastas", response_model=PastaConteudoResponse, status_code=201)
-def create_pasta(body: PastaConteudoCreate, user: EscritaUser, db: DbSession) -> PastaConteudoResponse:
+@router.post("/criar-pasta", response_model=PastaConteudoResponse, status_code=201)
+def criar_pasta(body: PastaConteudoCreate, user: EscritaUser, db: DbSession) -> PastaConteudoResponse:
     return _svc(db).create_pasta(user, body)
 
 
-@router.patch("/conteudo/pastas/{pasta_id}", response_model=PastaConteudoResponse)
-def patch_pasta(
+@router.put("/editar-pasta/{pasta_id}", response_model=PastaConteudoResponse)
+def editar_pasta(
     pasta_id: uuid.UUID, body: PastaConteudoPatch, user: EscritaUser, db: DbSession
 ) -> PastaConteudoResponse:
     return _svc(db).patch_pasta(user, pasta_id, body)
 
 
-@router.delete("/conteudo/pastas/{pasta_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_pasta(pasta_id: uuid.UUID, user: EscritaUser, db: DbSession) -> Response:
+@router.delete("/apagar-pasta/{pasta_id}", status_code=status.HTTP_204_NO_CONTENT)
+def apagar_pasta(pasta_id: uuid.UUID, user: EscritaUser, db: DbSession) -> Response:
     _svc(db).delete_pasta(user, pasta_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/conteudo/pastas/{pasta_id}/materiais", response_model=list[MaterialResponse])
-def list_materiais(pasta_id: uuid.UUID, user: AuthUser, db: DbSession) -> list[MaterialResponse]:
+@router.get("/consultar-materiais/{pasta_id}", response_model=list[MaterialResponse])
+def consultar_materiais(pasta_id: uuid.UUID, user: AuthUser, db: DbSession) -> list[MaterialResponse]:
     return _svc(db).list_materiais(user, pasta_id)
 
 
-@router.post("/conteudo/pastas/{pasta_id}/materiais", response_model=MaterialResponse, status_code=201)
-def create_material(
+@router.post("/criar-material/{pasta_id}", response_model=MaterialResponse, status_code=201)
+def criar_material(
     pasta_id: uuid.UUID, body: MaterialCreate, user: EscritaUser, db: DbSession
 ) -> MaterialResponse:
     return _svc(db).create_material(user, pasta_id, body)
 
 
-@router.get("/conteudo/materiais/{material_id}", response_model=MaterialResponse)
-def get_material(material_id: uuid.UUID, user: AuthUser, db: DbSession) -> MaterialResponse:
+@router.get("/consultar-material/{material_id}", response_model=MaterialResponse)
+def consultar_material(
+    material_id: uuid.UUID, user: AuthUser, db: DbSession
+) -> MaterialResponse:
     return _svc(db).get_material(user, material_id)
 
 
-@router.patch("/conteudo/materiais/{material_id}", response_model=MaterialResponse)
-def patch_material(
+@router.put("/editar-material/{material_id}", response_model=MaterialResponse)
+def editar_material(
     material_id: uuid.UUID, body: MaterialPatch, user: EscritaUser, db: DbSession
 ) -> MaterialResponse:
     return _svc(db).patch_material(user, material_id, body)
 
 
-@router.delete("/conteudo/materiais/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_material(material_id: uuid.UUID, user: EscritaUser, db: DbSession) -> Response:
+@router.delete("/apagar-material/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+def apagar_material(material_id: uuid.UUID, user: EscritaUser, db: DbSession) -> Response:
     _svc(db).delete_material(user, material_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/uploads/presign", response_model=PresignResponse)
-def presign_upload(body: PresignRequest, user: EscritaUser, db: DbSession) -> PresignResponse:
+@router.post("/gerar-url-upload", response_model=PresignResponse)
+def gerar_url_upload(body: PresignRequest, user: EscritaUser, db: DbSession) -> PresignResponse:
     return _svc(db).presign(user, body)

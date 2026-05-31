@@ -35,7 +35,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edusaas}:${POSTGRES_PASSWORD:-edusaas}@db:5432/${POSTGRES_DB:-edusaas}
       APP_ENV: ${APP_ENV:-development}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT:-3000}}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-edusaas-dev}
       JWT_ACCESS_MINUTES: ${JWT_ACCESS_MINUTES:-30}
       JWT_REFRESH_DAYS: ${JWT_REFRESH_DAYS:-7}
@@ -73,9 +73,12 @@ services:
       - frontend_next:/app/.next
     command: >
       sh -c "if [ ! -x node_modules/.bin/next ]; then npm ci; fi &&
+      echo '' &&
+      echo '>>> Frontend disponível em http://localhost:${FRONTEND_PORT:-3000}' &&
+      echo '' &&
       exec npm run dev -- --hostname 0.0.0.0 --port 3000"
     ports:
-      - "${FRONTEND_PORT:-3001}:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       backend:
         condition: service_healthy

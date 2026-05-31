@@ -21,7 +21,7 @@ export async function GET() {
     )
   }
   try {
-    const me = await apiRequest<UserMe>("/auth/me", { token })
+    const me = await apiRequest<UserMe>("/configuracoes/consultar-perfil", { token })
     return NextResponse.json(me)
   } catch (e: unknown) {
     clearAuthCookies(jar)

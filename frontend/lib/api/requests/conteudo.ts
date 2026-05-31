@@ -11,25 +11,26 @@ import type {
 } from "../dtos/conteudo"
 
 export const conteudoRequests = {
-  listPastas: () => bffRequest<PastaConteudoResponse[]>("/conteudo/pastas"),
+  listPastas: () => bffRequest<PastaConteudoResponse[]>("/conteudo/consultar-pastas"),
   createPasta: (body: PastaConteudoCreate) =>
-    bffRequest<PastaConteudoResponse>("/conteudo/pastas", { method: "POST", body }),
+    bffRequest<PastaConteudoResponse>("/conteudo/criar-pasta", { method: "POST", body }),
   patchPasta: (id: string, body: PastaConteudoPatch) =>
-    bffRequest<PastaConteudoResponse>(`/conteudo/pastas/${id}`, { method: "PATCH", body }),
+    bffRequest<PastaConteudoResponse>(`/conteudo/editar-pasta/${id}`, { method: "PUT", body }),
   deletePasta: (id: string) =>
-    bffRequest<void>(`/conteudo/pastas/${id}`, { method: "DELETE" }),
+    bffRequest<void>(`/conteudo/apagar-pasta/${id}`, { method: "DELETE" }),
   listMateriais: (pastaId: string) =>
-    bffRequest<MaterialResponse[]>(`/conteudo/pastas/${pastaId}/materiais`),
+    bffRequest<MaterialResponse[]>(`/conteudo/consultar-materiais/${pastaId}`),
   createMaterial: (pastaId: string, body: MaterialCreate) =>
-    bffRequest<MaterialResponse>(`/conteudo/pastas/${pastaId}/materiais`, {
+    bffRequest<MaterialResponse>(`/conteudo/criar-material/${pastaId}`, {
       method: "POST",
       body,
     }),
-  getMaterial: (id: string) => bffRequest<MaterialResponse>(`/conteudo/materiais/${id}`),
+  getMaterial: (id: string) =>
+    bffRequest<MaterialResponse>(`/conteudo/consultar-material/${id}`),
   patchMaterial: (id: string, body: MaterialPatch) =>
-    bffRequest<MaterialResponse>(`/conteudo/materiais/${id}`, { method: "PATCH", body }),
+    bffRequest<MaterialResponse>(`/conteudo/editar-material/${id}`, { method: "PUT", body }),
   deleteMaterial: (id: string) =>
-    bffRequest<void>(`/conteudo/materiais/${id}`, { method: "DELETE" }),
+    bffRequest<void>(`/conteudo/apagar-material/${id}`, { method: "DELETE" }),
   presign: (body: PresignRequest) =>
-    bffRequest<PresignResponse>("/uploads/presign", { method: "POST", body }),
+    bffRequest<PresignResponse>("/conteudo/gerar-url-upload", { method: "POST", body }),
 }

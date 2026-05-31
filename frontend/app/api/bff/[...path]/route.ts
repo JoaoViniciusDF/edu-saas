@@ -2,19 +2,34 @@ import { cookies } from "next/headers"
 import { NextRequest, NextResponse } from "next/server"
 import { apiRequest } from "@/lib/api/client"
 import { parseApiError } from "@/lib/api/errors"
-import { COOKIE_ACCESS, COOKIE_REFRESH, cookieOptions } from "@/lib/api/session"
+import {
+  COOKIE_ACCESS,
+  COOKIE_IMPERSONATOR_ACCESS,
+  COOKIE_IMPERSONATOR_REFRESH,
+  COOKIE_REFRESH,
+  cookieOptions,
+  impersonatorIdFromAccessToken,
+  subjectFromAccessToken,
+} from "@/lib/api/session"
 import type { LoginResponse } from "@/lib/api/dtos/auth"
 
 async function getAccessToken(): Promise<string | null> {
   const jar = await cookies()
-  let token = jar.get(COOKIE_ACCESS)?.value ?? null
-  if (token) return token
+  const accessCookie = jar.get(COOKIE_ACCESS)?.value ?? null
+  if (accessCookie) return accessCookie
   const refresh = jar.get(COOKIE_REFRESH)?.value
   if (!refresh) return null
+  let impersonatorId = impersonatorIdFromAccessToken(jar.get(COOKIE_ACCESS)?.value)
+  if (!impersonatorId && jar.get(COOKIE_IMPERSONATOR_REFRESH)?.value) {
+    impersonatorId = subjectFromAccessToken(jar.get(COOKIE_IMPERSONATOR_ACCESS)?.value)
+  }
   try {
-    const data = await apiRequest<LoginResponse>("/auth/refresh", {
+    const data = await apiRequest<LoginResponse>("/configuracoes/renovar-token", {
       method: "POST",
-      body: { refresh_token: refresh },
+      body: {
+        refresh_token: refresh,
+        impersonator_id: impersonatorId ?? undefined,
+      },
     })
     jar.set(COOKIE_ACCESS, data.access_token, { ...cookieOptions, maxAge: 60 * 60 })
     jar.set(COOKIE_REFRESH, data.refresh_token, {

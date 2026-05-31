@@ -11,25 +11,28 @@ from app.models.enums import TipoPerfil
 from app.schemas.dashboard import DashboardResumo, DashboardSeriesResponse, NotificacaoItem, SearchHit
 from app.services.dashboard_service import DashboardService
 
-router = APIRouter(tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+DashboardUser = Annotated[
+    CurrentUser,
+    Depends(
+        require_perfis(
+            TipoPerfil.super_admin,
+            TipoPerfil.professor,
+            TipoPerfil.administrador,
+            TipoPerfil.responsavel,
+        )
+    ),
+]
 
 
 def _svc(db: DbSession) -> DashboardService:
     return DashboardService(db)
 
 
-@router.get("/dashboard/resumo", response_model=DashboardResumo)
-def dashboard_resumo(
-    user: Annotated[
-        CurrentUser,
-        Depends(
-            require_perfis(
-                TipoPerfil.professor,
-                TipoPerfil.administrador,
-                TipoPerfil.responsavel,
-            )
-        ),
-    ],
+@router.get("/consultar-resumo", response_model=DashboardResumo)
+def consultar_resumo(
+    user: DashboardUser,
     db: DbSession,
     escopo: str | None = None,
     turma_id: uuid.UUID | None = None,
@@ -40,18 +43,9 @@ def dashboard_resumo(
     return _svc(db).resumo(user, escopo, turma_id, aluno_id, data_inicio, data_fim)
 
 
-@router.get("/dashboard/series", response_model=DashboardSeriesResponse)
-def dashboard_series(
-    user: Annotated[
-        CurrentUser,
-        Depends(
-            require_perfis(
-                TipoPerfil.professor,
-                TipoPerfil.administrador,
-                TipoPerfil.responsavel,
-            )
-        ),
-    ],
+@router.get("/consultar-series", response_model=DashboardSeriesResponse)
+def consultar_series(
+    user: DashboardUser,
     db: DbSession,
     turma_id: uuid.UUID | None = None,
     aluno_id: uuid.UUID | None = None,
@@ -61,8 +55,8 @@ def dashboard_series(
     return _svc(db).series(user, turma_id, aluno_id, data_inicio, data_fim)
 
 
-@router.get("/search", response_model=list[SearchHit])
-def search(
+@router.get("/buscar", response_model=list[SearchHit])
+def buscar(
     user: AuthUser,
     db: DbSession,
     q: str,
@@ -71,18 +65,18 @@ def search(
     return _svc(db).search(user, q, types)
 
 
-@router.get("/notificacoes", response_model=list[NotificacaoItem])
-def list_notificacoes(user: AuthUser, db: DbSession) -> list[NotificacaoItem]:
+@router.get("/consultar-notificacoes", response_model=list[NotificacaoItem])
+def consultar_notificacoes(user: AuthUser, db: DbSession) -> list[NotificacaoItem]:
     return _svc(db).list_notificacoes(user)
 
 
-@router.patch("/notificacoes/{notif_id}/lida", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/marcar-notificacao-lida/{notif_id}", status_code=status.HTTP_204_NO_CONTENT)
 def marcar_notificacao_lida(notif_id: uuid.UUID, user: AuthUser, db: DbSession) -> Response:
     _svc(db).marcar_notificacao_lida(user, notif_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/notificacoes/marcar-todas-lidas", status_code=status.HTTP_204_NO_CONTENT)
-def marcar_todas_lidas(user: AuthUser, db: DbSession) -> Response:
+@router.post("/marcar-todas-notificacoes-lidas", status_code=status.HTTP_204_NO_CONTENT)
+def marcar_todas_notificacoes_lidas(user: AuthUser, db: DbSession) -> Response:
     _svc(db).marcar_todas_lidas(user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

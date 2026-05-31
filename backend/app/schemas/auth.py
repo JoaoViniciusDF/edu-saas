@@ -21,8 +21,15 @@ class UserMe(BaseModel):
     professor_id: UUID | None = None
     aluno_id: UUID | None = None
     responsavel_id: UUID | None = None
+    impersonador: "ImpersonadorInfo | None" = None
 
     model_config = {"from_attributes": True}
+
+
+class ImpersonadorInfo(BaseModel):
+    usuario_id: UUID
+    email: str
+    nome_exibicao: str
 
 
 class LoginResponse(BaseModel):
@@ -35,6 +42,7 @@ class LoginResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+    impersonator_id: UUID | None = None
 
 
 class UserPreferencesPatch(BaseModel):

@@ -5,7 +5,6 @@ const API_BASE =
   process.env.API_URL ??
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:8000"
-const API_V1 = `${API_BASE}/api/v1`
 
 export type RequestOptions = {
   method?: string
@@ -16,7 +15,7 @@ export type RequestOptions = {
 }
 
 function buildUrl(path: string, searchParams?: RequestOptions["searchParams"]) {
-  const url = path.startsWith("http") ? path : `${API_V1}${path.startsWith("/") ? path : `/${path}`}`
+  const url = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`
   if (!searchParams) return url
   const params = new URLSearchParams()
   for (const [k, v] of Object.entries(searchParams)) {
@@ -83,4 +82,4 @@ export async function bffRequest<T>(
   return JSON.parse(text) as T
 }
 
-export { API_BASE, API_V1 }
+export { API_BASE }

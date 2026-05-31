@@ -23,7 +23,11 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def check_database_connection() -> bool:
+def check_database_connection() -> tuple[bool, float]:
+    import time
+
+    start = time.perf_counter()
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
-    return True
+    latency_ms = round((time.perf_counter() - start) * 1000, 2)
+    return True, latency_ms

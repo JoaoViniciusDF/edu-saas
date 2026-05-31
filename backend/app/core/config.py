@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     jwt_access_minutes: int = 30
     jwt_refresh_days: int = 7
     public_base_url: str = "http://localhost:8000"
+    app_version: str = "2.0.0"
 
     @property
     def cors_origin_list(self) -> list[str]:

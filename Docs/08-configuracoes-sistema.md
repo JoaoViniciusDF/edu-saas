@@ -15,13 +15,13 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant ADM as Administrador
   participant PRF as Professor
-  SA->>API: POST /admin/instituicoes
+  SA->>API: POST /configuracoes/criar-instituicao
   API->>DB: instituicao + usuario administrador
   API-->>SA: instituicao_id
-  ADM->>API: POST /cadastros/professores
-  ADM->>API: POST /cadastros/turmas
-  ADM->>API: POST /cadastros/alunos
-  ADM->>API: POST /cadastros/matriculas
+  ADM->>API: POST /configuracoes/criar-usuario
+  ADM->>API: POST /configuracoes/criar-turma
+  ADM->>API: POST /configuracoes/criar-usuario
+  ADM->>API: POST /configuracoes/criar-matricula
   ADM->>API: POST aluno/responsaveis
   PRF->>API: Usar modulos pedagogicos
 ```
@@ -31,7 +31,7 @@ sequenceDiagram
 1. Acessa `/super-admin/instituicoes/nova`
 2. Informa `nome_fantasia`, `documento_legal` (opcional)
 3. Opcionalmente cria **primeiro administrador**: e-mail, senha temporária, nome
-4. `POST /admin/instituicoes` persiste `instituicao` + `usuario_conta` (`tipo_perfil=administrador`)
+4. `POST /configuracoes/criar-instituicao` persiste `instituicao` + `usuario_conta` (`tipo_perfil=administrador`)
 
 ### Passo 2 — Administrador configura a escola
 
@@ -57,19 +57,38 @@ Professores (ou administrador) usam Conteúdo, Avaliações, Comunicados e Dashb
 | Cartões | Total instituições, professores, turmas, alunos (plataforma) |
 | Ação rápida | Nova instituição |
 
-API: `GET /super-admin/resumo`
+API: `GET /configuracoes/consultar-resumo-plataforma`
 
 ### `/super-admin/instituicoes`
 
 | Coluna | Ação |
 |--------|------|
-| Nome | Link detalhe |
+| Nome | Link para `/super-admin/instituicoes/[id]` |
 | Documento | — |
-| Qtd turmas / professores | Derivado |
-| Status | ativa/suspensa |
-| Ações | Editar |
+| Professores / Turmas / Alunos | Contagens via resumo da instituição |
 
 Filtros: nome, status. Paginação cursor.
+
+### `/super-admin/instituicoes/[id]`
+
+| Bloco | Dados / ações |
+|-------|----------------|
+| Cartões | Administradores, professores, turmas, alunos, responsáveis |
+| Usuários | Tabela com botão **Entrar como** (impersonação) |
+| Professores | Listar + criar professor (`POST /configuracoes/criar-usuario` com `instituicao_id`) |
+| Turmas | Listagem filtrada por escola |
+
+API: `GET /configuracoes/consultar-resumo-instituicao/{id}`
+
+**Fluxo impersonação (Super Admin):**
+
+1. Na tela da escola, clicar **Entrar como** em gestor, professor, aluno ou responsável
+2. Frontend chama `POST /api/auth/assumir-sessao` → backend `POST /configuracoes/assumir-sessao/{usuario_id}`
+3. Cookies de sessão passam a ser do usuário alvo; cookies do SA ficam em backup
+4. Redirecionamento para home do perfil (`/configuracoes`, `/conteudo`, `/aluno/provas`, `/dashboard`)
+5. Faixa amarela no topo: **Voltar ao Super Admin** → `POST /api/auth/restaurar-sessao-admin`
+
+Credenciais demo (senha `admin123`): ver comentário em `backend/scripts/seed.py`.
 
 ### `/super-admin/professores`
 
@@ -80,13 +99,13 @@ Filtros: nome, status. Paginação cursor.
 | Instituição | FK nome_fantasia |
 | Turmas titular | Contagem |
 
-Query: `?instituicao_id=` (opcional). API: `GET /super-admin/professores`
+Query: `?instituicao_id=` (opcional). API: `GET /configuracoes/consultar-professores`
 
 ### `/super-admin/turmas`
 
-Mesma lógica com `GET /super-admin/turmas`.
+Mesma lógica com `GET /configuracoes/consultar-turmas?instituicao_id=`.
 
-**Restrição:** Super Admin **não** acessa editor de provas nem emite comunicados como professor.
+**Restrição:** Super Admin **não** acessa editor de provas nem emite comunicados como professor **sem** assumir sessão de um usuário da escola.
 
 ---
 
@@ -109,7 +128,7 @@ Layout com abas ou subnav:
 | registro_funcional | opcional |
 | areas_especialidade | opcional |
 
-API: `POST /cadastros/professores` cria `usuario_conta` + `professor`.
+API: `POST /configuracoes/criar-usuario` com `tipo_perfil=professor` cria `usuario_conta` + `professor`.
 
 **Desativar:** `status_conta=suspensa` (não apagar histórico).
 
@@ -129,8 +148,8 @@ API: `POST /cadastros/professores` cria `usuario_conta` + `professor`.
 **Detalhe turma** `/configuracoes/turmas/[id]`
 - Lista alunos matriculados (ativos)
 - Ação "Matricular aluno" → modal seleciona aluno sem matrícula ativa
-- `POST /cadastros/matriculas`
-- Ação "Encerrar matrícula" → `PATCH /cadastros/matriculas/{id}`
+- `POST /configuracoes/criar-matricula`
+- Ação "Encerrar matrícula" → `PUT /configuracoes/editar-matricula/{id}`
 
 ### Alunos
 
@@ -154,7 +173,7 @@ API: `POST /cadastros/professores` cria `usuario_conta` + `professor`.
 
 Formulário análogo ao aluno com `grau_parentesco`, `telefone`.
 
-Vínculo: `POST /cadastros/alunos/{id}/responsaveis`
+Vínculo: `POST /configuracoes/vincular-responsavel-aluno/{aluno_id}`
 
 ---
 

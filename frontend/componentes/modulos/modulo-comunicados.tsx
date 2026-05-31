@@ -121,12 +121,15 @@ function rotuloStatus(status: Comunicado["status"]) {
   return status === "rascunho" ? "Rascunho" : "Publicado"
 }
 
+const LISTA_VAZIA: ComunicadoListItem[] = []
+
 export function ModuloComunicados() {
   const qc = useQueryClient()
-  const { data: listaApi = [], isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["comunicados"],
     queryFn: () => comunicadosRequests.list(),
   })
+  const listaApi = data ?? LISTA_VAZIA
   const { data: turmas = [] } = useQuery({
     queryKey: ["turmas"],
     queryFn: () => leituraRequests.listTurmas(),
@@ -140,10 +143,18 @@ export function ModuloComunicados() {
       })),
     [turmas]
   )
-  const [comunicados, setComunicados] = React.useState<Comunicado[]>([])
-  React.useEffect(() => {
-    setComunicados(listaApi.map(listaParaComunicado))
-  }, [listaApi])
+  const comunicadosBase = React.useMemo(
+    () => listaApi.map(listaParaComunicado),
+    [listaApi]
+  )
+  const [lidosLocal, setLidosLocal] = React.useState<Record<string, boolean>>({})
+  const comunicados = React.useMemo(
+    () =>
+      comunicadosBase.map((c) =>
+        lidosLocal[c.id] !== undefined ? { ...c, lido: lidosLocal[c.id] } : c
+      ),
+    [comunicadosBase, lidosLocal]
+  )
   const [comunicadoSelecionado, setComunicadoSelecionado] = React.useState<Comunicado | null>(null)
   const [dialogAberto, setDialogAberto] = React.useState(false)
   const [buscaDestinatario, setBuscaDestinatario] = React.useState("")
@@ -160,9 +171,7 @@ export function ModuloComunicados() {
     setComunicadoSelecionado(completo)
     if (!completo.lido) {
       await comunicadosRequests.marcarLido(completo.id)
-      setComunicados((prev) =>
-        prev.map((item) => (item.id === completo.id ? { ...item, lido: true } : item))
-      )
+      setLidosLocal((prev) => ({ ...prev, [completo.id]: true }))
       void qc.invalidateQueries({ queryKey: ["comunicados"] })
     }
   }

@@ -41,17 +41,19 @@ def create_access_token(
     usuario_id: uuid.UUID,
     perfil: TipoPerfil,
     instituicao_id: uuid.UUID | None,
+    *,
+    impersonator_id: uuid.UUID | None = None,
 ) -> str:
     settings = get_settings()
-    return _encode(
-        {
-            "sub": str(usuario_id),
-            "type": "access",
-            "perfil": perfil.value,
-            "instituicao_id": str(instituicao_id) if instituicao_id else None,
-        },
-        timedelta(minutes=settings.jwt_access_minutes),
-    )
+    payload: dict[str, Any] = {
+        "sub": str(usuario_id),
+        "type": "access",
+        "perfil": perfil.value,
+        "instituicao_id": str(instituicao_id) if instituicao_id else None,
+    }
+    if impersonator_id is not None:
+        payload["impersonator_id"] = str(impersonator_id)
+    return _encode(payload, timedelta(minutes=settings.jwt_access_minutes))
 
 
 def create_refresh_token(usuario_id: uuid.UUID) -> str:
