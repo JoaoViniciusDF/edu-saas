@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.api.deps import AuthUser, CurrentUser, DbSession, require_perfis
 from app.models.enums import TipoPerfil
@@ -29,8 +29,13 @@ def _svc(db: DbSession) -> ConteudoService:
 
 
 @router.get("/consultar-pastas", response_model=list[PastaConteudoResponse])
-def consultar_pastas(user: AuthUser, db: DbSession) -> list[PastaConteudoResponse]:
-    return _svc(db).list_pastas(user)
+def consultar_pastas(
+    user: AuthUser,
+    db: DbSession,
+    turma_id: uuid.UUID | None = Query(None),
+    aluno_id: uuid.UUID | None = Query(None),
+) -> list[PastaConteudoResponse]:
+    return _svc(db).list_pastas(user, turma_id=turma_id, aluno_id=aluno_id)
 
 
 @router.post("/criar-pasta", response_model=PastaConteudoResponse, status_code=201)
@@ -52,8 +57,13 @@ def apagar_pasta(pasta_id: uuid.UUID, user: EscritaUser, db: DbSession) -> Respo
 
 
 @router.get("/consultar-materiais/{pasta_id}", response_model=list[MaterialResponse])
-def consultar_materiais(pasta_id: uuid.UUID, user: AuthUser, db: DbSession) -> list[MaterialResponse]:
-    return _svc(db).list_materiais(user, pasta_id)
+def consultar_materiais(
+    pasta_id: uuid.UUID,
+    user: AuthUser,
+    db: DbSession,
+    aluno_id: uuid.UUID | None = Query(None),
+) -> list[MaterialResponse]:
+    return _svc(db).list_materiais(user, pasta_id, aluno_id=aluno_id)
 
 
 @router.post("/criar-material/{pasta_id}", response_model=MaterialResponse, status_code=201)
@@ -65,9 +75,12 @@ def criar_material(
 
 @router.get("/consultar-material/{material_id}", response_model=MaterialResponse)
 def consultar_material(
-    material_id: uuid.UUID, user: AuthUser, db: DbSession
+    material_id: uuid.UUID,
+    user: AuthUser,
+    db: DbSession,
+    aluno_id: uuid.UUID | None = Query(None),
 ) -> MaterialResponse:
-    return _svc(db).get_material(user, material_id)
+    return _svc(db).get_material(user, material_id, aluno_id=aluno_id)
 
 
 @router.put("/editar-material/{material_id}", response_model=MaterialResponse)

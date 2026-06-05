@@ -122,23 +122,15 @@ function rotaItem(item: DiretorioPlataformaItem, visao: VisaoPlataforma): string
   if (visao === "instituicoes" || item.tipo === "instituicao") {
     return `/super-admin/instituicoes/${item.id}`
   }
-  if (item.tipo === "aluno" || item.aluno_id) {
-    return `/super-admin/alunos/${item.aluno_id ?? item.id}`
-  }
-  if (item.tipo === "professor" || item.professor_id) {
-    return `/super-admin/professores/${item.professor_id ?? item.id}`
+  const usuarioId = item.usuario_id ?? (item.tipo === "usuario" ? item.id : null)
+  if (usuarioId) {
+    return `/super-admin/usuario/${usuarioId}`
   }
   if (visao === "alunos" || visao === "alunos_turma") {
-    return `/super-admin/alunos/${item.id}`
+    return item.usuario_id ? `/super-admin/usuario/${item.usuario_id}` : null
   }
   if (visao === "professores" || visao === "professores_turma") {
-    return `/super-admin/professores/${item.id}`
-  }
-  if (item.perfil === "aluno" && item.aluno_id) {
-    return `/super-admin/alunos/${item.aluno_id}`
-  }
-  if (item.perfil === "professor" && item.professor_id) {
-    return `/super-admin/professores/${item.professor_id}`
+    return item.usuario_id ? `/super-admin/usuario/${item.usuario_id}` : null
   }
   return null
 }

@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
-import { ehRotaPublica } from "@/lib/auth/rotas-por-perfil"
+import type { TipoPerfil } from "@/lib/api/dtos/common"
+import { COOKIE_ACCESS, perfilFromAccessToken } from "@/lib/api/session"
+import { ehRotaPublica, ROTA_HOME_POR_PERFIL } from "@/lib/auth/rotas-por-perfil"
 import { accessTokenNaoExpirado, accessTokenValido } from "@/lib/auth/validar-token"
-import { COOKIE_ACCESS } from "@/lib/api/session"
+
+const devLeve = process.env.NODE_ENV === "development"
 
 async function tokenAceito(token: string | undefined): Promise<boolean> {
+  if (devLeve) return accessTokenNaoExpirado(token)
   if (await accessTokenValido(token)) return true
   return accessTokenNaoExpirado(token)
 }
@@ -15,7 +19,8 @@ export async function middleware(request: NextRequest) {
 
   if (ehRotaPublica(pathname)) {
     if (pathname === "/login" && (await tokenAceito(token))) {
-      return NextResponse.redirect(new URL("/", request.url))
+      const perfil = (perfilFromAccessToken(token) ?? "professor") as TipoPerfil
+      return NextResponse.redirect(new URL(ROTA_HOME_POR_PERFIL[perfil], request.url))
     }
     return NextResponse.next()
   }

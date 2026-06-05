@@ -22,22 +22,25 @@ export function arvoreParaMateria(arvore: ArvoreMateria, cor: string): MateriaAv
         id: av.id,
         titulo: av.titulo,
         status: av.status,
-        alunosFeitos: 0,
-        alunosTotal: 0,
+        alunosFeitos: av.total_submissoes ?? undefined,
+        alunosTotal: av.total_alunos_turma ?? undefined,
       }))
+      const totalSubmissoes = avaliacoes.reduce((acc, av) => acc + (av.alunosFeitos ?? 0), 0)
       const concluidas = avaliacoes.filter(
         (x) => x.status === "encerrada" || x.status === "publicada"
       ).length
       return {
         id: p.id,
         nome: p.nome,
-        alunosResponderam: 0,
-        alunosTotal: 0,
+        alunosResponderam: totalSubmissoes ?? undefined,
+        alunosTotal: undefined,
         avaliacoesConcluidas: concluidas,
         avaliacoesTotal: avaliacoes.length,
-        statusResumo: p.avaliacoes.length
-          ? `${avaliacoes.filter((x) => x.status === "rascunho").length} rascunho(s)`
-          : "Sem avaliações ainda",
+        statusResumo:
+          p.resumo_status_texto ??
+          (p.avaliacoes.length
+            ? `${avaliacoes.filter((x) => x.status === "rascunho").length} rascunho(s)`
+            : "Sem avaliações ainda"),
         avaliacoes,
       }
     })

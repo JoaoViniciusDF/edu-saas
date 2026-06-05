@@ -1,29 +1,29 @@
 "use client"
 
 import * as React from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
+import { ApiError } from "@/lib/api/errors"
+import { upsertAvaliacaoNaArvore } from "@/lib/avaliacoes/cache-arvore"
 import {
   BookMarked,
-  Bot,
   Calendar,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   Circle,
   Copy,
+  CopyPlus,
   FileQuestion,
   FolderOpen,
   GripVertical,
   Layers,
   Lock,
   Plus,
+  RefreshCw,
   Save,
-  Send,
-  Sparkles,
   Trash2,
-  User,
-  Wand2,
+  XCircle,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -41,7 +41,16 @@ import type { AvaliacaoListaItem } from "@/lib/avaliacoes/tipos-ui"
 import type { StatusAvaliacao } from "@/lib/api/dtos/common"
 import { documentoDeTexto } from "@/lib/avaliacoes/documento"
 import { avaliacoesRequests } from "@/lib/api/requests/avaliacoes"
+import { queryKeys } from "@/lib/cache/query-keys"
 import { useAvaliacoes } from "@/componentes/modulos/avaliacoes-provedor"
+import { useTurmaAtiva } from "@/componentes/provedores/provedor-turma-ativa"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Dialog,
   DialogContent,
@@ -50,11 +59,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { CardPendente } from "@/components/ui/card-pendente"
+import { PainelSubmissoesAvaliacao } from "@/componentes/modulos/painel-submissoes-avaliacao"
 
-interface MensagemChat {
-  id: string
-  tipo: "usuario" | "assistente"
-  conteudo: string
+export type PendenteUi = {
+  key: string
+  titulo: string
+  tipo: "materia" | "assunto" | "pasta" | "avaliacao"
 }
 
 interface Questao {
@@ -64,15 +75,6 @@ interface Questao {
   alternativas?: string[]
   respostaCorreta?: number
 }
-
-const mensagensIniciais: MensagemChat[] = [
-  {
-    id: "1",
-    tipo: "assistente",
-    conteudo:
-      "Olá! Sou seu assistente de avaliações. Posso ajudar você a gerar questões e revisar a prova.",
-  },
-]
 
 function questoesApiParaUi(
   questoes: import("@/lib/api/dtos/avaliacoes").QuestaoResponse[]
@@ -116,136 +118,15 @@ function badgeStatus(status: StatusAvaliacao) {
           Encerrada
         </Badge>
       )
+    case "inativa":
+      return (
+        <Badge variant="secondary" className="rounded-full text-xs">
+          Inativa
+        </Badge>
+      )
     default:
       return null
   }
-}
-
-/** Padding horizontal único do painel da IA (header, mensagens e input alinhados) */
-const iaPainelPadX = "px-4 sm:px-5 lg:px-6"
-
-function PainelAssistenteIA({
-  mensagens,
-  inputMensagem,
-  setInputMensagem,
-  enviarMensagem,
-  aoFecharMobile,
-  minimizado,
-  onAlternarMinimizar,
-}: {
-  mensagens: MensagemChat[]
-  inputMensagem: string
-  setInputMensagem: (v: string) => void
-  enviarMensagem: () => void
-  aoFecharMobile: () => void
-  minimizado: boolean
-  onAlternarMinimizar: () => void
-}) {
-  return (
-    <div
-      className={cn(
-        "flex min-h-0 flex-col border-border/50 bg-card/50 backdrop-blur-xl",
-        minimizado ? "h-auto" : "h-full min-h-0"
-      )}
-    >
-      <div
-        className={cn(
-          "shrink-0 border-b border-border/50 bg-card/50 py-3 backdrop-blur-xl",
-          iaPainelPadX
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/80 shadow-soft">
-              <Sparkles className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold leading-tight">Assistente IA</h3>
-              <p className="text-xs text-muted-foreground">Online</p>
-            </div>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-foreground"
-            onClick={onAlternarMinimizar}
-            aria-expanded={!minimizado}
-            aria-label={minimizado ? "Maximizar assistente" : "Minimizar assistente"}
-          >
-            {minimizado ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          "grid min-h-0 w-full overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-in-out",
-          minimizado
-            ? "pointer-events-none grid-rows-[0fr] opacity-0"
-            : "min-h-0 flex-1 grid-rows-[1fr] opacity-100"
-        )}
-      >
-        <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <ScrollArea className="min-h-0 flex-1 basis-0">
-          <div className={cn("space-y-4 py-4", iaPainelPadX)}>
-            {mensagens.map((msg) => (
-              <div
-                key={msg.id}
-                className={cn("flex gap-3", msg.tipo === "usuario" ? "justify-end" : "justify-start")}
-              >
-                {msg.tipo === "assistente" && (
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/80">
-                    <Bot className="h-4 w-4 text-primary-foreground" />
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                    msg.tipo === "usuario"
-                      ? "rounded-br-md bg-primary text-primary-foreground"
-                      : "rounded-bl-md border border-border/50 bg-secondary/80"
-                  )}
-                >
-                  {msg.conteudo}
-                </div>
-                {msg.tipo === "usuario" && (
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary">
-                    <User className="h-4 w-4 text-secondary-foreground" />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          </ScrollArea>
-
-          <div className={cn("shrink-0 border-t border-border/50 bg-card/50 py-4", iaPainelPadX)}>
-          <div className="mb-2 flex justify-end lg:hidden">
-            <Button variant="ghost" size="sm" className="h-8 rounded-lg text-xs" onClick={aoFecharMobile}>
-              Fechar
-            </Button>
-          </div>
-          <div className="flex gap-2">
-            <Input
-              placeholder="Peça à IA para gerar ou ajustar o quiz..."
-              value={inputMensagem}
-              onChange={(e) => setInputMensagem(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && enviarMensagem()}
-              className="h-11 rounded-xl border-transparent bg-secondary/50 text-sm focus:border-primary/30"
-            />
-            <Button
-              size="icon"
-              onClick={enviarMensagem}
-              className="h-11 w-11 shrink-0 rounded-xl bg-gradient-to-br from-primary to-primary/80 shadow-soft"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 interface ModuloAvaliacoesProps {
@@ -254,8 +135,9 @@ interface ModuloAvaliacoesProps {
   avaliacaoId?: string
   /** Quando true, em /avaliacoes a página já mostra o título; só a grelha de matérias. */
   omitirCabecalhoRaiz?: boolean
-  /** Fragmento à direita do título da matéria (ex.: botão Novo Conteúdo na página). */
+  /** Fragmento à direita do título da matéria (ex.: botão Novo assunto na página). */
   cabecalhoExtrasMateria?: React.ReactNode
+  pendentes?: PendenteUi[]
 }
 
 export function ModuloAvaliacoes({
@@ -264,22 +146,30 @@ export function ModuloAvaliacoes({
   avaliacaoId,
   omitirCabecalhoRaiz,
   cabecalhoExtrasMateria,
+  pendentes = [],
 }: ModuloAvaliacoesProps = {}) {
   const router = useRouter()
+  const qc = useQueryClient()
   const {
     materias,
     obterMateria,
     obterContextoRota,
     adicionarConteudoNoAssunto,
+    invalidarArvore,
   } = useAvaliacoes()
+  const { turmaAtivaId, turmas, setTurmaAtivaId } = useTurmaAtiva()
+  const [modalPublicarAberto, setModalPublicarAberto] = React.useState(false)
+  const [modalReabrirAberto, setModalReabrirAberto] = React.useState(false)
+  const [confirmacao, setConfirmacao] = React.useState<{
+    titulo: string
+    descricao: string
+    acao: () => Promise<void>
+  } | null>(null)
+  const [turmaPublicarId, setTurmaPublicarId] = React.useState<string>("")
 
-  const [mensagens, setMensagens] = React.useState<MensagemChat[]>(mensagensIniciais)
   const [questoes, setQuestoes] = React.useState<Questao[]>([])
   const [tituloAvaliacao, setTituloAvaliacao] = React.useState("Nova avaliação")
-  const [inputMensagem, setInputMensagem] = React.useState("")
   const [dataEntrega, setDataEntrega] = React.useState<Date>()
-  const [painelIAAberto, setPainelIAAberto] = React.useState(false)
-  const [painelIAMinimizado, setPainelIAMinimizado] = React.useState(false)
   const [modoEdicao, setModoEdicao] = React.useState(true)
   const [origemUrl, setOrigemUrl] = React.useState("")
   const [pendenciaNovaPasta, setPendenciaNovaPasta] = React.useState<{
@@ -287,6 +177,11 @@ export function ModuloAvaliacoes({
     assuntoId: string
   } | null>(null)
   const [nomeNovaPasta, setNomeNovaPasta] = React.useState("")
+  const [pendentesLocais, setPendentesLocais] = React.useState<PendenteUi[]>([])
+  const todosPendentes = React.useMemo(
+    () => [...pendentes, ...pendentesLocais],
+    [pendentes, pendentesLocais]
+  )
 
   React.useEffect(() => {
     setOrigemUrl(window.location.origin)
@@ -301,6 +196,12 @@ export function ModuloAvaliacoes({
       ? contextoConteudo.conteudo.avaliacoes.find((item) => item.id === avaliacaoId) ?? null
       : null
 
+  const { data: detalheApi } = useQuery({
+    queryKey: queryKeys.avaliacoes.detalhe(avaliacaoId ?? ""),
+    queryFn: () => avaliacoesRequests.getAvaliacao(avaliacaoId!),
+    enabled: !!avaliacaoId && avaliacaoId !== "nova" && !!materiaId && !!conteudoId,
+  })
+
   React.useEffect(() => {
     if (!avaliacaoId || !materiaId || !conteudoId) return
 
@@ -308,61 +209,116 @@ export function ModuloAvaliacoes({
       setModoEdicao(true)
       setTituloAvaliacao("Nova avaliação")
       setQuestoes([])
-      setMensagens(mensagensIniciais)
       return
     }
 
-    avaliacoesRequests.getAvaliacao(avaliacaoId).then((det) => {
-      const podeEditar = det.status === "rascunho"
-      setModoEdicao(podeEditar)
-      setTituloAvaliacao(det.titulo)
-      setQuestoes(questoesApiParaUi(det.questoes))
-      if (det.prazo_utc) setDataEntrega(new Date(det.prazo_utc))
-      setMensagens([
-        ...mensagensIniciais,
-        {
-          id: "ia-stub",
-          tipo: "assistente",
-          conteudo: podeEditar
-            ? "Assistente IA em breve — edição manual disponível."
-            : "Esta avaliação está em modo leitura. Apenas rascunhos podem ser editados.",
-        },
-      ])
-    })
-  }, [avaliacaoId, materiaId, conteudoId])
+    if (!detalheApi) return
+    const podeEditar = detalheApi.status === "rascunho"
+    setModoEdicao(podeEditar)
+    setTituloAvaliacao(detalheApi.titulo)
+    setQuestoes(questoesApiParaUi(detalheApi.questoes))
+    if (detalheApi.prazo_utc) setDataEntrega(new Date(detalheApi.prazo_utc))
+  }, [avaliacaoId, materiaId, conteudoId, detalheApi])
 
   const garantirAvaliacaoId = async (): Promise<string | null> => {
     if (!contextoConteudo || !materiaId || !conteudoId) return null
     if (avaliacaoId && avaliacaoId !== "nova") return avaliacaoId
-    const criada = await avaliacoesRequests.createAvaliacao(contextoConteudo.conteudo.id, {
-      titulo: tituloAvaliacao.trim() || "Nova avaliação",
-      prazo_utc: dataEntrega?.toISOString(),
-    })
-    router.replace(`/avaliacoes/${materiaId}/${conteudoId}/${criada.id}`)
-    return criada.id
+    try {
+      const criada = await avaliacoesRequests.createAvaliacao(contextoConteudo.conteudo.id, {
+        titulo: tituloAvaliacao.trim() || "Nova avaliação",
+        prazo_utc: dataEntrega?.toISOString(),
+      })
+      const cor = materiaAtual?.cor ?? "from-blue-500 to-blue-600"
+      qc.setQueryData(queryKeys.avaliacoes.detalhe(criada.id), criada)
+      upsertAvaliacaoNaArvore(
+        qc,
+        materiaId,
+        conteudoId,
+        criada,
+        cor,
+        turmaAtivaId
+      )
+      await invalidarArvore(materiaId)
+      router.replace(`/avaliacoes/${materiaId}/${conteudoId}/${criada.id}`)
+      return criada.id
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Não foi possível criar a avaliação")
+      return null
+    }
+  }
+
+  const criarNovaAvaliacao = async () => {
+    if (!materiaAtual || !contextoConteudo) return
+    try {
+      const criada = await avaliacoesRequests.createAvaliacao(contextoConteudo.conteudo.id, {
+        titulo: "Nova avaliação",
+      })
+      qc.setQueryData(queryKeys.avaliacoes.detalhe(criada.id), criada)
+      upsertAvaliacaoNaArvore(
+        qc,
+        materiaAtual.id,
+        contextoConteudo.conteudo.id,
+        criada,
+        materiaAtual.cor,
+        turmaAtivaId
+      )
+      await invalidarArvore(materiaAtual.id)
+      router.push(
+        `/avaliacoes/${materiaAtual.id}/${contextoConteudo.conteudo.id}/${criada.id}`
+      )
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Não foi possível criar a avaliação")
+    }
   }
 
   const salvarRascunho = async () => {
     if (!modoEdicao) return
-    const id = await garantirAvaliacaoId()
-    if (!id) return
-    await avaliacoesRequests.patchAvaliacao(id, { titulo: tituloAvaliacao })
-    await avaliacoesRequests.replaceQuestoes(id, {
-      questoes: questoesUiParaApi(questoes),
-    })
-    await avaliacoesRequests.salvarRascunho(id)
+    try {
+      const id = await garantirAvaliacaoId()
+      if (!id) return
+      await avaliacoesRequests.patchAvaliacao(id, { titulo: tituloAvaliacao })
+      await avaliacoesRequests.replaceQuestoes(id, {
+        questoes: questoesUiParaApi(questoes),
+      })
+      await avaliacoesRequests.salvarRascunho(id)
+      if (materiaId) await invalidarArvore(materiaId)
+      toast.success("Rascunho salvo")
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao salvar rascunho")
+    }
+  }
+
+  const abrirModalPublicar = () => {
+    if (!modoEdicao) return
+    if (questoes.length === 0) {
+      toast.error("Adicione ao menos uma questão antes de publicar")
+      return
+    }
+    setTurmaPublicarId(turmaAtivaId ?? turmas[0]?.id ?? "")
+    setModalPublicarAberto(true)
   }
 
   const publicarAvaliacao = async () => {
-    if (!modoEdicao) return
-    const id = await garantirAvaliacaoId()
-    if (!id) return
-    await avaliacoesRequests.patchAvaliacao(id, { titulo: tituloAvaliacao })
-    await avaliacoesRequests.replaceQuestoes(id, {
-      questoes: questoesUiParaApi(questoes),
-    })
-    await avaliacoesRequests.publicar(id)
-    setModoEdicao(false)
+    if (!modoEdicao || !turmaPublicarId) {
+      toast.error("Selecione a turma para publicar")
+      return
+    }
+    try {
+      const id = await garantirAvaliacaoId()
+      if (!id) return
+      await avaliacoesRequests.patchAvaliacao(id, { titulo: tituloAvaliacao })
+      await avaliacoesRequests.replaceQuestoes(id, {
+        questoes: questoesUiParaApi(questoes),
+      })
+      await avaliacoesRequests.publicar(id, { turma_id: turmaPublicarId })
+      setTurmaAtivaId(turmaPublicarId)
+      if (materiaId) await invalidarArvore(materiaId)
+      setModoEdicao(false)
+      setModalPublicarAberto(false)
+      toast.success("Avaliação publicada")
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao publicar — verifique o gabarito")
+    }
   }
 
   const copiarLink = async (url: string) => {
@@ -370,27 +326,102 @@ export function ModuloAvaliacoes({
     await navigator.clipboard.writeText(url)
   }
 
-  const enviarMensagem = () => {
-    if (!inputMensagem.trim()) return
-    setMensagens((prev) => [
-      ...prev,
-      { id: Date.now().toString(), tipo: "usuario", conteudo: inputMensagem },
-      {
-        id: `${Date.now()}-ia`,
-        tipo: "assistente",
-        conteudo:
-          "Assistente IA em breve. Use o editor manual para montar questões e publicar a prova.",
-      },
-    ])
-    setInputMensagem("")
+  const duplicarAvaliacao = async (id: string) => {
+    if (!materiaId || !conteudoId) return
+    try {
+      const copia = await avaliacoesRequests.duplicar(id)
+      await invalidarArvore(materiaId)
+      toast.success("Avaliação duplicada")
+      router.push(`/avaliacoes/${materiaId}/${conteudoId}/${copia.id}`)
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao duplicar")
+    }
   }
+
+  const encerrarAvaliacao = async (id: string) => {
+    try {
+      await avaliacoesRequests.encerrar(id)
+      if (materiaId) await invalidarArvore(materiaId)
+      await qc.invalidateQueries({ queryKey: queryKeys.avaliacoes.detalhe(id) })
+      setModoEdicao(false)
+      toast.success("Avaliação encerrada")
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao encerrar")
+    }
+  }
+
+  const inativarAvaliacao = async (id: string) => {
+    try {
+      await avaliacoesRequests.inativar(id)
+      if (materiaId) await invalidarArvore(materiaId)
+      await qc.invalidateQueries({ queryKey: queryKeys.avaliacoes.detalhe(id) })
+      toast.success("Avaliação inativada")
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao inativar")
+    }
+  }
+
+  const apagarAvaliacao = async (id: string) => {
+    try {
+      await avaliacoesRequests.apagar(id)
+      if (materiaId) await invalidarArvore(materiaId)
+      toast.success("Avaliação apagada permanentemente")
+      if (materiaId && conteudoId) {
+        router.push(`/avaliacoes/${materiaId}/${conteudoId}`)
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao apagar")
+    }
+  }
+
+  const reabrirAvaliacao = async () => {
+    if (!avaliacaoId || avaliacaoId === "nova") return
+    try {
+      await avaliacoesRequests.reabrir(avaliacaoId, {
+        prazo_utc: dataEntrega?.toISOString(),
+      })
+      if (materiaId) await invalidarArvore(materiaId)
+      await qc.invalidateQueries({ queryKey: queryKeys.avaliacoes.detalhe(avaliacaoId) })
+      setModalReabrirAberto(false)
+      toast.success("Avaliação reaberta")
+    } catch (e: unknown) {
+      toast.error(e instanceof ApiError ? e.message : "Erro ao reabrir")
+    }
+  }
+
+  const dialogoConfirmacao = (
+    <Dialog open={!!confirmacao} onOpenChange={(aberto) => !aberto && setConfirmacao(null)}>
+      <DialogContent className="rounded-2xl sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{confirmacao?.titulo}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{confirmacao?.descricao}</p>
+        <DialogFooter>
+          <Button variant="outline" className="rounded-xl" onClick={() => setConfirmacao(null)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            className="rounded-xl"
+            onClick={() => {
+              const acao = confirmacao?.acao
+              setConfirmacao(null)
+              if (acao) void acao()
+            }}
+          >
+            Confirmar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 
   const adicionarQuestao = () => {
     if (!modoEdicao) return
     setQuestoes((prev) => [
       ...prev,
       {
-        id: Date.now().toString(),
+        id: `new-${Date.now()}`,
         tipo: "multipla-escolha",
         pergunta: "Nova questão",
         alternativas: ["Alternativa A", "Alternativa B", "Alternativa C", "Alternativa D"],
@@ -444,11 +475,23 @@ export function ModuloAvaliacoes({
             onClick={() => {
               if (!pendenciaNovaPasta) return
               const { materiaId: mid, assuntoId: aid } = pendenciaNovaPasta
-              void adicionarConteudoNoAssunto(mid, aid, nomeNovaPasta).then((novoId) => {
-                setPendenciaNovaPasta(null)
-                setNomeNovaPasta("")
-                if (novoId) router.push(`/avaliacoes/${mid}/${novoId}`)
-              })
+              const titulo = nomeNovaPasta.trim() || "Nova pasta de avaliações"
+              const pendKey = `pasta-${Date.now()}`
+              setPendentesLocais((p) => [
+                ...p,
+                { key: pendKey, titulo, tipo: "pasta" },
+              ])
+              setPendenciaNovaPasta(null)
+              setNomeNovaPasta("")
+              void adicionarConteudoNoAssunto(mid, aid, titulo)
+                .then((novoId) => {
+                  setPendentesLocais((p) => p.filter((x) => x.key !== pendKey))
+                  if (novoId) router.push(`/avaliacoes/${mid}/${novoId}`)
+                })
+                .catch(() => {
+                  setPendentesLocais((p) => p.filter((x) => x.key !== pendKey))
+                  toast.error("Não foi possível criar a pasta")
+                })
             }}
           >
             Criar e abrir
@@ -461,6 +504,11 @@ export function ModuloAvaliacoes({
   if (!materiaId) {
     const grelha = (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {todosPendentes
+          .filter((p) => p.tipo === "materia")
+          .map((p) => (
+            <CardPendente key={p.key} className="min-h-[120px]" linhas={2} />
+          ))}
         {materias.map((materia) => (
           <div
             key={materia.id}
@@ -490,7 +538,7 @@ export function ModuloAvaliacoes({
                 title="Nova pasta de avaliações nesta matéria"
                 onClick={(e) => {
                   e.stopPropagation()
-                  const primeiroAssunto = materia.assuntos[0]
+                  const primeiroAssunto = materia.assuntos.find((a) => a.id !== "_loading")
                   if (!primeiroAssunto) return
                   setNomeNovaPasta("")
                   setPendenciaNovaPasta({ materiaId: materia.id, assuntoId: primeiroAssunto.id })
@@ -578,6 +626,11 @@ export function ModuloAvaliacoes({
                 </Button>
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {todosPendentes
+                  .filter((p) => p.tipo === "pasta" || p.tipo === "assunto")
+                  .map((p) => (
+                    <CardPendente key={p.key} linhas={2} />
+                  ))}
                 {assunto.conteudos.map((conteudo) => (
                   <button
                     key={conteudo.id}
@@ -634,7 +687,7 @@ export function ModuloAvaliacoes({
             </div>
             <Button
               className="rounded-xl shadow-soft"
-              onClick={() => router.push(`/avaliacoes/${materiaAtual.id}/${contextoConteudo.conteudo.id}/nova`)}
+              onClick={() => void criarNovaAvaliacao()}
             >
               <Plus className="mr-2 h-4 w-4" />
               Nova avaliação
@@ -653,16 +706,61 @@ export function ModuloAvaliacoes({
                       className="min-w-0 text-left"
                     >
                       <h3 className="truncate font-semibold">{avaliacao.titulo}</h3>
-                      <p className="text-xs text-muted-foreground">
-                        {avaliacao.alunosFeitos}/{avaliacao.alunosTotal} alunos responderam
-                      </p>
+                      {(avaliacao.alunosFeitos != null || avaliacao.alunosTotal != null) && (
+                        <p className="text-xs text-muted-foreground">
+                          {avaliacao.alunosFeitos ?? 0}
+                          {avaliacao.alunosTotal != null ? ` de ${avaliacao.alunosTotal}` : ""} submissões
+                        </p>
+                      )}
                     </button>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       {badgeStatus(avaliacao.status)}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-lg"
+                        onClick={() => void duplicarAvaliacao(avaliacao.id)}
+                      >
+                        <CopyPlus className="mr-1 h-3.5 w-3.5" />
+                        Duplicar
+                      </Button>
                       <Button size="sm" variant="outline" className="rounded-lg" onClick={() => copiarLink(url)}>
                         <Copy className="mr-1 h-3.5 w-3.5" />
-                        Copiar link
+                        Link
                       </Button>
+                      {avaliacao.status === "rascunho" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="rounded-lg text-destructive"
+                          onClick={() =>
+                            setConfirmacao({
+                              titulo: "Apagar avaliação?",
+                              descricao: "Esta ação é permanente e não pode ser desfeita.",
+                              acao: () => apagarAvaliacao(avaliacao.id),
+                            })
+                          }
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {(avaliacao.status === "publicada" || avaliacao.status === "encerrada") && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="rounded-lg"
+                          onClick={() =>
+                            setConfirmacao({
+                              titulo: "Inativar avaliação?",
+                              descricao: "A prova será cancelada e deixará de aparecer para os alunos.",
+                              acao: () => inativarAvaliacao(avaliacao.id),
+                            })
+                          }
+                        >
+                          <XCircle className="mr-1 h-3.5 w-3.5" />
+                          Inativar
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -737,18 +835,88 @@ export function ModuloAvaliacoes({
           <Button
             className="h-10 gap-2 rounded-xl bg-gradient-to-r from-primary to-primary/80 text-xs shadow-soft sm:text-sm"
             disabled={!modoEdicao}
-            onClick={() => void publicarAvaliacao()}
+            onClick={abrirModalPublicar}
           >
             <CheckCircle2 className="h-4 w-4" />
             Publicar
           </Button>
+          {!modoEdicao && avaliacaoId && avaliacaoId !== "nova" && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-10 rounded-xl"
+                onClick={() => void duplicarAvaliacao(avaliacaoId)}
+              >
+                <CopyPlus className="mr-1 h-4 w-4" />
+                Duplicar
+              </Button>
+              {detalheApi?.status === "publicada" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-10 rounded-xl"
+                  onClick={() =>
+                    setConfirmacao({
+                      titulo: "Encerrar avaliação?",
+                      descricao: "Alunos não poderão mais enviar respostas.",
+                      acao: () => encerrarAvaliacao(avaliacaoId),
+                    })
+                  }
+                >
+                  Encerrar
+                </Button>
+              )}
+              {(detalheApi?.status === "publicada" || detalheApi?.status === "encerrada") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-10 rounded-xl"
+                  onClick={() =>
+                    setConfirmacao({
+                      titulo: "Inativar avaliação?",
+                      descricao: "A prova será cancelada e ocultada dos alunos.",
+                      acao: () => inativarAvaliacao(avaliacaoId),
+                    })
+                  }
+                >
+                  <XCircle className="mr-1 h-4 w-4" />
+                  Inativar
+                </Button>
+              )}
+              {(detalheApi?.status === "encerrada" || detalheApi?.status === "inativa") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-10 rounded-xl"
+                  onClick={() => setModalReabrirAberto(true)}
+                >
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                  Reabrir
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 rounded-xl text-destructive"
+                onClick={() =>
+                  setConfirmacao({
+                    titulo: "Apagar avaliação permanentemente?",
+                    descricao: "Todos os dados, questões e submissões serão removidos do banco.",
+                    acao: () => apagarAvaliacao(avaliacaoId),
+                  })
+                }
+              >
+                <Trash2 className="mr-1 h-4 w-4" />
+                Apagar
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Mesmo recuo horizontal à direita do header (px-6 em lg), para a coluna do chat coincidir com a área útil */}
-      <div className="relative flex min-h-0 flex-1 flex-col pr-4 lg:flex-row lg:items-stretch lg:pr-6">
-        {/* Editor no centro: order menor que o painel da IA no desktop (flex: 0 = esquerda, 1 = direita estava invertido) */}
-        <div className="order-2 flex min-h-0 min-w-0 flex-1 flex-col lg:order-1 lg:border-r lg:border-border/50">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ScrollArea className="min-h-0 flex-1">
             <div className="mx-auto max-w-3xl space-y-4 p-4 sm:p-6 lg:p-8">
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -766,7 +934,7 @@ export function ModuloAvaliacoes({
                   />
                   <p className="mt-1 text-sm text-muted-foreground">
                     {modoEdicao
-                      ? "Edite as questões no centro e converse com o assistente à direita."
+                      ? "Edite as questões abaixo e publique quando estiver pronto."
                       : "Visualização da avaliação publicada ou encerrada."}
                   </p>
                 </div>
@@ -775,12 +943,18 @@ export function ModuloAvaliacoes({
                 </Badge>
               </div>
 
+              {!modoEdicao && avaliacaoId && avaliacaoId !== "nova" && (
+                <div className="mb-6">
+                  <PainelSubmissoesAvaliacao avaliacaoId={avaliacaoId} />
+                </div>
+              )}
+
               {questoes.length === 0 && modoEdicao && (
                 <Card className="rounded-2xl border-dashed border-border/60 bg-secondary/20">
                   <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
                     <FileQuestion className="h-10 w-10 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
-                      Comece adicionando questões ou peça ajuda ao assistente IA.
+                      Comece adicionando questões manualmente.
                     </p>
                     <Button className="rounded-xl" onClick={adicionarQuestao}>
                       <Plus className="mr-2 h-4 w-4" />
@@ -896,53 +1070,80 @@ export function ModuloAvaliacoes({
             </div>
           </ScrollArea>
         </div>
-
-        <div
-          className={cn(
-            /* Desktop: coluna com altura da linha; minimizado só a faixa do cabeçalho */
-            "fixed inset-0 z-40 flex h-full min-h-0 shrink-0 lg:static lg:z-auto lg:order-2 lg:w-88 xl:w-96",
-            painelIAMinimizado ? "lg:h-auto lg:self-end" : "lg:h-full lg:min-h-0 lg:self-stretch",
-            !painelIAAberto && "pointer-events-none opacity-0 lg:pointer-events-auto lg:opacity-100"
-          )}
-        >
-          <button
-            type="button"
-            className="flex-1 bg-black/40 lg:hidden"
-            aria-label="Fechar assistente"
-            onClick={() => setPainelIAAberto(false)}
-          />
-          <div
-            className={cn(
-              "flex min-h-0 w-full max-w-md flex-col border-border/50 bg-card shadow-soft-lg transition-transform duration-300 lg:max-w-none lg:border-l-0 lg:shadow-none",
-              painelIAMinimizado ? "h-auto lg:h-auto" : "h-full min-h-0",
-              !painelIAAberto && "translate-x-full lg:translate-x-0"
-            )}
-          >
-            <PainelAssistenteIA
-              mensagens={mensagens}
-              inputMensagem={inputMensagem}
-              setInputMensagem={setInputMensagem}
-              enviarMensagem={enviarMensagem}
-              aoFecharMobile={() => setPainelIAAberto(false)}
-              minimizado={painelIAMinimizado}
-              onAlternarMinimizar={() => setPainelIAMinimizado((v) => !v)}
-            />
-          </div>
-        </div>
-
-        <div className="fixed bottom-6 right-6 z-50 lg:hidden">
-          <Button
-            size="lg"
-            className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary to-primary/80 shadow-soft-lg"
-            onClick={() => {
-              setPainelIAMinimizado(false)
-              setPainelIAAberto(true)
-            }}
-          >
-            <Wand2 className="h-5 w-5" />
-          </Button>
-        </div>
       </div>
+
+      <Dialog open={modalPublicarAberto} onOpenChange={setModalPublicarAberto}>
+        <DialogContent className="rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Publicar para qual turma?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Turma</Label>
+            <Select value={turmaPublicarId} onValueChange={setTurmaPublicarId}>
+              <SelectTrigger className="rounded-xl">
+                <SelectValue placeholder="Selecione a turma" />
+              </SelectTrigger>
+              <SelectContent>
+                {turmas.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Somente alunos matriculados nesta turma verão a prova.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setModalPublicarAberto(false)}>
+              Cancelar
+            </Button>
+            <Button className="rounded-xl" onClick={() => void publicarAvaliacao()}>
+              Publicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={modalReabrirAberto} onOpenChange={setModalReabrirAberto}>
+        <DialogContent className="rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reabrir avaliação</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Novo prazo (opcional)</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-start rounded-xl">
+                  <Calendar className="mr-2 h-4 w-4" />
+                  {dataEntrega ? format(dataEntrega, "PPP", { locale: ptBR }) : "Manter prazo atual"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto rounded-2xl p-0" align="start">
+                <CalendarComponent
+                  mode="single"
+                  selected={dataEntrega}
+                  onSelect={setDataEntrega}
+                  locale={ptBR}
+                  initialFocus
+                  className="rounded-2xl"
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setModalReabrirAberto(false)}>
+              Cancelar
+            </Button>
+            <Button className="rounded-xl" onClick={() => void reabrirAvaliacao()}>
+              Reabrir prova
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {dialogoConfirmacao}
     </div>
   )
 }

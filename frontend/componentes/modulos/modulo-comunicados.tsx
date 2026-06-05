@@ -3,7 +3,8 @@
 import * as React from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { comunicadosRequests } from "@/lib/api/requests/comunicados"
-import { leituraRequests } from "@/lib/api/requests/configuracoes"
+import { leituraRequests, cadastrosRequests } from "@/lib/api/requests/configuracoes"
+import { queryKeys } from "@/lib/cache/query-keys"
 import type { ComunicadoListItem, ComunicadoDetail } from "@/lib/api/dtos/comunicados"
 import {
   ArrowLeft,
@@ -14,6 +15,7 @@ import {
   ImagePlus,
   Inbox,
   MailCheck,
+  Pencil,
   Plus,
   Save,
   Send,
@@ -31,18 +33,18 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Label } from "@/components/ui/label"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  ModalCriarComunicadoWizard,
+  ModalEditarComunicadoWizard,
+} from "@/componentes/modulos/wizards/modal-comunicado-wizard"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/componentes/provedores/provedor-auth"
+import type { TipoDestinatarioComunicado } from "@/lib/api/dtos/common"
+import { Eye, EyeOff } from "lucide-react"
+import { toast } from "sonner"
 
 interface Destinatario {
   id: string
-  tipo: "aluno" | "turma" | "responsavel"
+  tipo: TipoDestinatarioComunicado
   nome: string
 }
 
@@ -53,9 +55,19 @@ interface Comunicado {
   destinatarios: Destinatario[]
   dataHora: string
   lido: boolean
-  autor: string
   status: "rascunho" | "publicado"
   imagens: string[]
+  total_destinatarios?: number | null
+  total_lidos?: number | null
+}
+
+function formatarData(iso: string | null | undefined): string {
+  if (!iso) return ""
+  try {
+    return new Date(iso).toLocaleString("pt-BR")
+  } catch {
+    return iso
+  }
 }
 
 function listaParaComunicado(item: ComunicadoListItem): Comunicado {
@@ -64,29 +76,38 @@ function listaParaComunicado(item: ComunicadoListItem): Comunicado {
     titulo: item.titulo,
     conteudo: item.preview_corpo ?? "",
     destinatarios: [],
-    dataHora: item.publicado_em ?? "—",
+    dataHora: formatarData(item.publicado_em),
     lido: item.lido,
-    autor: "—",
     status: item.status,
     imagens: [],
   }
 }
 
-function detalheParaComunicado(d: ComunicadoDetail): Comunicado {
+function detalheParaComunicado(
+  d: ComunicadoDetail,
+  catalogo: Map<string, Destinatario>
+): Comunicado {
   return {
     id: d.id,
     titulo: d.titulo,
     conteudo: d.corpo,
-    destinatarios: d.destinatarios.map((x) => ({
-      id: x.id,
-      tipo: x.tipo,
-      nome: `${x.tipo} ${x.id.slice(0, 8)}`,
-    })),
-    dataHora: d.publicado_em ?? "—",
+    destinatarios: d.destinatarios.map((x) => {
+      const chave = `${x.tipo}:${x.id}`
+      const encontrado = catalogo.get(chave)
+      return (
+        encontrado ?? {
+          id: x.id,
+          tipo: x.tipo,
+          nome: x.id,
+        }
+      )
+    }),
+    dataHora: formatarData(d.publicado_em),
     lido: d.lido,
-    autor: "—",
     status: d.status,
     imagens: d.imagens_urls,
+    total_destinatarios: d.total_destinatarios,
+    total_lidos: d.total_lidos,
   }
 }
 
@@ -109,12 +130,25 @@ function badgeTipo(tipo: Destinatario["tipo"]) {
     )
   }
 
-  return (
-    <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px] font-medium">
-      <Users className="mr-1 h-2.5 w-2.5" />
-      Responsavel
-    </Badge>
-  )
+  if (tipo === "professor") {
+    return (
+      <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px] font-medium">
+        <ShieldCheck className="mr-1 h-2.5 w-2.5" />
+        Professor
+      </Badge>
+    )
+  }
+
+  if (tipo === "responsavel") {
+    return (
+      <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px] font-medium">
+        <Users className="mr-1 h-2.5 w-2.5" />
+        Responsavel
+      </Badge>
+    )
+  }
+
+  return null
 }
 
 function rotuloStatus(status: Comunicado["status"]) {
@@ -123,26 +157,116 @@ function rotuloStatus(status: Comunicado["status"]) {
 
 const LISTA_VAZIA: ComunicadoListItem[] = []
 
-export function ModuloComunicados() {
-  const qc = useQueryClient()
+function PainelLeiturasComunicado({ comunicadoId }: { comunicadoId: string }) {
   const { data, isLoading } = useQuery({
-    queryKey: ["comunicados"],
+    queryKey: queryKeys.comunicados.leituras(comunicadoId),
+    queryFn: () => comunicadosRequests.leituras(comunicadoId),
+  })
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Carregando leituras...</p>
+  }
+  if (!data?.itens.length) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Nenhum destinatario efetivo ou comunicado ainda nao publicado.
+      </p>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold">Quem visualizou</p>
+        <Badge variant="secondary" className="rounded-full">
+          {data.total_lidos}/{data.total_destinatarios} lidos
+        </Badge>
+      </div>
+      <ul className="max-h-48 space-y-2 overflow-y-auto">
+        {data.itens.map((item) => (
+          <li
+            key={item.usuario_id}
+            className="flex items-center justify-between gap-2 rounded-lg bg-card px-3 py-2 text-sm"
+          >
+            <span className="truncate font-medium">{item.nome_exibicao}</span>
+            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+              {item.lido ? (
+                <>
+                  <Eye className="h-3.5 w-3.5 text-emerald-600" />
+                  {item.lido_em
+                    ? new Date(item.lido_em).toLocaleString("pt-BR", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })
+                    : "Lido"}
+                </>
+              ) : (
+                <>
+                  <EyeOff className="h-3.5 w-3.5" />
+                  Nao lido
+                </>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+export function ModuloComunicados({ somenteLeitura = false }: { somenteLeitura?: boolean }) {
+  const { usuario } = useAuth()
+  const ehStaff =
+    usuario?.perfil === "professor" || usuario?.perfil === "administrador"
+  const qc = useQueryClient()
+  const [dialogAberto, setDialogAberto] = React.useState(false)
+  const [editarAberto, setEditarAberto] = React.useState(false)
+  const [comunicadoSelecionado, setComunicadoSelecionado] = React.useState<Comunicado | null>(null)
+  const precisaCatalogo =
+    !somenteLeitura && (dialogAberto || editarAberto || comunicadoSelecionado !== null)
+
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: queryKeys.comunicados.lista(),
     queryFn: () => comunicadosRequests.list(),
   })
   const listaApi = data ?? LISTA_VAZIA
+
   const { data: turmas = [] } = useQuery({
-    queryKey: ["turmas"],
+    queryKey: queryKeys.turmas.resumo(),
     queryFn: () => leituraRequests.listTurmas(),
+    enabled: precisaCatalogo,
   })
-  const catalogoDestinatarios: Destinatario[] = React.useMemo(
-    () =>
-      turmas.map((t) => ({
-        id: t.id,
-        tipo: "turma" as const,
-        nome: t.nome,
-      })),
-    [turmas]
-  )
+  const { data: alunos = [] } = useQuery({
+    queryKey: queryKeys.cadastros.alunos(),
+    queryFn: () => cadastrosRequests.listAlunos(),
+    enabled: precisaCatalogo,
+  })
+  const { data: responsaveis = [] } = useQuery({
+    queryKey: queryKeys.cadastros.responsaveis(),
+    queryFn: () => cadastrosRequests.listResponsaveis(),
+    enabled: precisaCatalogo && ehStaff,
+  })
+  const { data: professores = [] } = useQuery({
+    queryKey: queryKeys.cadastros.professores(),
+    queryFn: () => cadastrosRequests.listProfessores(),
+    enabled: precisaCatalogo && ehStaff,
+  })
+
+  const catalogoMap = React.useMemo(() => {
+    const map = new Map<string, Destinatario>()
+    turmas.forEach((t) => map.set(`turma:${t.id}`, { id: t.id, tipo: "turma", nome: t.nome }))
+    alunos.forEach((a) =>
+      map.set(`aluno:${a.id}`, { id: a.id, tipo: "aluno", nome: a.nome_exibicao })
+    )
+    responsaveis.forEach((r) =>
+      map.set(`responsavel:${r.id}`, { id: r.id, tipo: "responsavel", nome: r.nome_exibicao })
+    )
+    professores.forEach((p) =>
+      map.set(`professor:${p.id}`, { id: p.id, tipo: "professor", nome: p.nome_exibicao })
+    )
+    return map
+  }, [turmas, alunos, responsaveis, professores])
+
   const comunicadosBase = React.useMemo(
     () => listaApi.map(listaParaComunicado),
     [listaApi]
@@ -155,101 +279,33 @@ export function ModuloComunicados() {
       ),
     [comunicadosBase, lidosLocal]
   )
-  const [comunicadoSelecionado, setComunicadoSelecionado] = React.useState<Comunicado | null>(null)
-  const [dialogAberto, setDialogAberto] = React.useState(false)
-  const [buscaDestinatario, setBuscaDestinatario] = React.useState("")
-  const [imagensTemporarias, setImagensTemporarias] = React.useState<string[]>([])
-  const [novoComunicado, setNovoComunicado] = React.useState({
-    titulo: "",
-    conteudo: "",
-    destinatarios: [] as Destinatario[],
-  })
-
   const selecionarComunicado = async (comunicado: Comunicado) => {
-    const detalhe = await comunicadosRequests.get(comunicado.id)
-    const completo = detalheParaComunicado(detalhe)
-    setComunicadoSelecionado(completo)
-    if (!completo.lido) {
-      await comunicadosRequests.marcarLido(completo.id)
-      setLidosLocal((prev) => ({ ...prev, [completo.id]: true }))
-      void qc.invalidateQueries({ queryKey: ["comunicados"] })
-    }
-  }
-
-  const resetFormulario = () => {
-    setNovoComunicado({ titulo: "", conteudo: "", destinatarios: [] })
-    setImagensTemporarias([])
-    setBuscaDestinatario("")
-  }
-
-  const criarComunicado = async (status: Comunicado["status"]) => {
-    const possuiConteudo = Boolean(novoComunicado.conteudo.trim()) || imagensTemporarias.length > 0
-    if (!novoComunicado.titulo.trim() || !possuiConteudo || novoComunicado.destinatarios.length === 0) return
-
-    const body = {
-      titulo: novoComunicado.titulo,
-      corpo: novoComunicado.conteudo,
-      imagens_urls: imagensTemporarias,
-      destinatarios: novoComunicado.destinatarios.map((d) => ({
-        tipo: d.tipo,
-        id: d.id,
-      })),
-      status_inicial: status,
-    }
-    let detalhe = await comunicadosRequests.create(body)
-    if (status === "publicado") {
-      detalhe = await comunicadosRequests.publicar(detalhe.id)
-    }
-    const novo = detalheParaComunicado(detalhe)
-    setComunicadoSelecionado(novo)
-    resetFormulario()
-    setDialogAberto(false)
-    void qc.invalidateQueries({ queryKey: ["comunicados"] })
-  }
-
-  const adicionarDestinatario = (destinatario: Destinatario) => {
-    setNovoComunicado((prev) => {
-      if (prev.destinatarios.some((item) => item.id === destinatario.id)) return prev
-      return { ...prev, destinatarios: [...prev.destinatarios, destinatario] }
-    })
-    setBuscaDestinatario("")
-  }
-
-  const removerDestinatario = (destinatarioId: string) => {
-    setNovoComunicado((prev) => ({
-      ...prev,
-      destinatarios: prev.destinatarios.filter((item) => item.id !== destinatarioId),
-    }))
-  }
-
-  const processarImagemClipboard = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const arquivosImagem = Array.from(event.clipboardData.items)
-      .filter((item) => item.type.startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((arquivo): arquivo is File => Boolean(arquivo))
-
-    if (arquivosImagem.length === 0) return
-    event.preventDefault()
-
-    arquivosImagem.forEach((arquivo) => {
-      const leitor = new FileReader()
-      leitor.onload = () => {
-        if (typeof leitor.result === "string") {
-          setImagensTemporarias((prev) => [...prev, leitor.result])
-        }
+    try {
+      const detalhe = await comunicadosRequests.get(comunicado.id)
+      const completo = detalheParaComunicado(detalhe, catalogoMap)
+      setComunicadoSelecionado(completo)
+      if (!completo.lido) {
+        await comunicadosRequests.marcarLido(completo.id)
+        setLidosLocal((prev) => ({ ...prev, [completo.id]: true }))
+        void qc.invalidateQueries({ queryKey: queryKeys.comunicados.lista() })
       }
-      leitor.readAsDataURL(arquivo)
-    })
+      if (ehStaff && completo.status === "publicado") {
+        void qc.invalidateQueries({ queryKey: queryKeys.comunicados.leituras(completo.id) })
+      }
+    } catch {
+      toast.error("Não foi possível abrir este comunicado.")
+    }
   }
-
-  const destinatariosDisponiveis = catalogoDestinatarios.filter((destinatario) => {
-    const naoSelecionado = !novoComunicado.destinatarios.some((item) => item.id === destinatario.id)
-    const bateBusca = destinatario.nome.toLowerCase().includes(buscaDestinatario.toLowerCase())
-    return naoSelecionado && bateBusca
-  })
 
   const naoLidos = comunicados.filter((c) => !c.lido).length
-  const possuiConteudoValido = Boolean(novoComunicado.conteudo.trim()) || imagensTemporarias.length > 0
+
+  const marcarTodosLidos = async () => {
+    await comunicadosRequests.marcarTodosLidos()
+    setLidosLocal(
+      Object.fromEntries(comunicados.map((c) => [c.id, true]))
+    )
+    void qc.invalidateQueries({ queryKey: queryKeys.comunicados.lista() })
+  }
 
   if (isLoading) {
     return (
@@ -259,149 +315,29 @@ export function ModuloComunicados() {
     )
   }
 
+  if (isError) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+        <p className="text-muted-foreground">Não foi possível carregar os comunicados.</p>
+        <Button variant="outline" className="rounded-xl" onClick={() => void refetch()}>
+          Tentar novamente
+        </Button>
+      </div>
+    )
+  }
+
   return (
-    <div className="h-[calc(100vh-5rem)]">
-      <Dialog
-        open={dialogAberto}
-        onOpenChange={(aberto) => {
-          setDialogAberto(aberto)
-          if (!aberto) resetFormulario()
-        }}
-      >
-        <DialogContent className="max-h-[90vh] overflow-y-auto rounded-2xl sm:max-w-[700px]">
-          <DialogHeader>
-            <DialogTitle className="text-xl">Novo comunicado</DialogTitle>
-            <DialogDescription>
-              Escolha destinatarios por tags, cole imagens e salve como rascunho quando quiser.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-5 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="titulo-comunicado">Titulo</Label>
-              <Input
-                id="titulo-comunicado"
-                placeholder="Ex.: Reuniao com responsaveis"
-                value={novoComunicado.titulo}
-                onChange={(e) => setNovoComunicado((prev) => ({ ...prev, titulo: e.target.value }))}
-                className="h-11 rounded-xl bg-secondary/50"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="conteudo-comunicado">Conteudo</Label>
-              <Textarea
-                id="conteudo-comunicado"
-                rows={7}
-                placeholder="Escreva seu comunicado. Voce pode colar imagens diretamente aqui."
-                value={novoComunicado.conteudo}
-                onChange={(e) => setNovoComunicado((prev) => ({ ...prev, conteudo: e.target.value }))}
-                onPaste={processarImagemClipboard}
-                className="resize-none rounded-xl bg-secondary/50"
-              />
-              <p className="text-xs text-muted-foreground">Atalho: Ctrl + V para colar imagem da area de transferencia.</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Imagens anexadas</Label>
-              {imagensTemporarias.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {imagensTemporarias.map((imagem, index) => (
-                    <div key={`${imagem.slice(0, 20)}-${index}`} className="relative overflow-hidden rounded-xl border border-border/70">
-                      <img src={imagem} alt={`Imagem colada ${index + 1}`} className="h-24 w-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => setImagensTemporarias((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
-                        className="absolute right-1 top-1 rounded-full bg-background/80 p-1 text-muted-foreground transition hover:text-destructive"
-                        aria-label="Remover imagem"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  <ImagePlus className="h-4 w-4" />
-                  Cole imagens para anexar ao comunicado.
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <Label>Destinatarios dinamicos</Label>
-              <div className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {novoComunicado.destinatarios.length === 0 && (
-                    <span className="text-xs text-muted-foreground">Nenhum destinatario selecionado.</span>
-                  )}
-                  {novoComunicado.destinatarios.map((destinatario) => (
-                    <Badge key={destinatario.id} variant="secondary" className="flex items-center gap-1 rounded-full px-2.5 py-1">
-                      <Tag className="h-3 w-3" />
-                      {destinatario.nome}
-                      <button
-                        type="button"
-                        className="rounded-full p-0.5 text-muted-foreground hover:text-destructive"
-                        onClick={() => removerDestinatario(destinatario.id)}
-                        aria-label={`Remover ${destinatario.nome}`}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                </div>
-
-                <Input
-                  placeholder="Buscar por aluno, turma ou responsavel..."
-                  value={buscaDestinatario}
-                  onChange={(e) => setBuscaDestinatario(e.target.value)}
-                  className="h-10 rounded-xl bg-background"
-                />
-                <div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-border/60 bg-background/80 p-1">
-                  {destinatariosDisponiveis.length > 0 ? (
-                    destinatariosDisponiveis.map((destinatario) => (
-                      <button
-                        key={destinatario.id}
-                        type="button"
-                        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-sm transition hover:bg-secondary"
-                        onClick={() => adicionarDestinatario(destinatario)}
-                      >
-                        <span>{destinatario.nome}</span>
-                        {badgeTipo(destinatario.tipo)}
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-2 py-3 text-xs text-muted-foreground">Nenhum destinatario encontrado.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" className="rounded-xl" onClick={() => setDialogAberto(false)}>
-              Cancelar
-            </Button>
-            <Button
-              variant="outline"
-              className="gap-2 rounded-xl"
-              disabled={!novoComunicado.titulo.trim() || !possuiConteudoValido || novoComunicado.destinatarios.length === 0}
-              onClick={() => criarComunicado("rascunho")}
-            >
-              <Save className="h-4 w-4" />
-              Salvar rascunho
-            </Button>
-            <Button
-              className="gap-2 rounded-xl bg-linear-to-br from-primary to-primary/80 shadow-soft"
-              disabled={!novoComunicado.titulo.trim() || !possuiConteudoValido || novoComunicado.destinatarios.length === 0}
-              onClick={() => criarComunicado("publicado")}
-            >
-              <Send className="h-4 w-4" />
-              Publicar comunicado
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+    <div className="flex min-h-0 flex-1 flex-col lg:h-[calc(100vh-5rem)]">
+      <ModalCriarComunicadoWizard aberto={dialogAberto} onOpenChange={setDialogAberto} />
+      {comunicadoSelecionado && (
+        <ModalEditarComunicadoWizard
+          comunicadoId={comunicadoSelecionado.id}
+          tituloInicial={comunicadoSelecionado.titulo}
+          corpoInicial={comunicadoSelecionado.conteudo}
+          aberto={editarAberto}
+          onOpenChange={setEditarAberto}
+        />
+      )}
 
       <div className="flex h-full flex-col lg:hidden">
         {!comunicadoSelecionado ? (
@@ -414,10 +350,24 @@ export function ModuloComunicados() {
                   </h1>
                   <p className="mt-0.5 text-sm text-muted-foreground">{naoLidos > 0 ? `${naoLidos} nao lidos` : "Todos lidos"}</p>
                 </div>
-                <Button size="sm" className="h-10 gap-2 rounded-xl" onClick={() => setDialogAberto(true)}>
-                  <Plus className="h-4 w-4" />
-                  Novo
-                </Button>
+                <div className="flex gap-2">
+                  {naoLidos > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-10 rounded-xl"
+                      onClick={() => void marcarTodosLidos()}
+                    >
+                      Marcar todos lidos
+                    </Button>
+                  )}
+                  {!somenteLeitura && (
+                    <Button size="sm" className="h-10 gap-2 rounded-xl" onClick={() => setDialogAberto(true)}>
+                      <Plus className="h-4 w-4" />
+                      Novo
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
             <ScrollArea className="flex-1">
@@ -425,10 +375,10 @@ export function ModuloComunicados() {
                 {comunicados.map((comunicado) => (
                   <button
                     key={comunicado.id}
-                    onClick={() => selecionarComunicado(comunicado)}
+                    onClick={() => void selecionarComunicado(comunicado)}
                     className={cn(
                       "mb-1 w-full rounded-xl border p-4 text-left transition-all",
-                      comunicadoSelecionado?.id === comunicado.id ? "border-primary/40 bg-primary/10" : "border-transparent hover:bg-secondary/80",
+                      "border-transparent hover:bg-secondary/80",
                       !comunicado.lido && "bg-primary/5"
                     )}
                   >
@@ -493,6 +443,9 @@ export function ModuloComunicados() {
                     ))}
                   </div>
                 )}
+                {ehStaff && comunicadoSelecionado.status === "publicado" && (
+                  <PainelLeiturasComunicado comunicadoId={comunicadoSelecionado.id} />
+                )}
               </div>
             </ScrollArea>
           </div>
@@ -520,10 +473,24 @@ export function ModuloComunicados() {
                   </h1>
                   <p className="mt-0.5 text-sm text-muted-foreground">{naoLidos > 0 ? `${naoLidos} nao lidos` : "Todos lidos"}</p>
                 </div>
-                <Button size="sm" className="h-10 gap-2 rounded-xl" onClick={() => setDialogAberto(true)}>
-                  <Plus className="h-4 w-4" />
-                  Novo
-                </Button>
+                <div className="flex gap-2">
+                  {naoLidos > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-10 rounded-xl"
+                      onClick={() => void marcarTodosLidos()}
+                    >
+                      Marcar todos lidos
+                    </Button>
+                  )}
+                  {!somenteLeitura && (
+                    <Button size="sm" className="h-10 gap-2 rounded-xl" onClick={() => setDialogAberto(true)}>
+                      <Plus className="h-4 w-4" />
+                      Novo
+                    </Button>
+                  )}
+                </div>
               </div>
               {!comunicadoSelecionado && (
                 <div className="mt-4 flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
@@ -538,7 +505,7 @@ export function ModuloComunicados() {
                 {comunicados.map((comunicado) => (
                   <button
                     key={comunicado.id}
-                    onClick={() => selecionarComunicado(comunicado)}
+                    onClick={() => void selecionarComunicado(comunicado)}
                     className={cn(
                       "mb-1 w-full rounded-xl border p-4 text-left transition-all",
                       comunicadoSelecionado?.id === comunicado.id ? "border-primary/40 bg-primary/10" : "border-transparent hover:bg-secondary/80",
@@ -604,16 +571,36 @@ export function ModuloComunicados() {
                       {rotuloStatus(comunicadoSelecionado.status)}
                     </Badge>
                   </div>
-                  <h2 className="text-3xl font-bold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
-                    {comunicadoSelecionado.titulo}
-                  </h2>
-                  <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">{comunicadoSelecionado.autor}</span>
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="h-4 w-4" />
-                      {comunicadoSelecionado.dataHora}
-                    </span>
+                  <div className="flex items-start justify-between gap-4">
+                    <h2 className="text-3xl font-bold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
+                      {comunicadoSelecionado.titulo}
+                    </h2>
+                    {!somenteLeitura && comunicadoSelecionado.status === "rascunho" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl gap-1 shrink-0"
+                        onClick={() => setEditarAberto(true)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Editar
+                      </Button>
+                    )}
                   </div>
+                  {comunicadoSelecionado.dataHora && (
+                    <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="h-4 w-4" />
+                        {comunicadoSelecionado.dataHora}
+                      </span>
+                      {comunicadoSelecionado.total_destinatarios != null && (
+                        <span>
+                          Leituras: {comunicadoSelecionado.total_lidos ?? 0}/
+                          {comunicadoSelecionado.total_destinatarios}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -637,6 +624,9 @@ export function ModuloComunicados() {
                         />
                       ))}
                     </div>
+                  )}
+                  {ehStaff && comunicadoSelecionado.status === "publicado" && (
+                    <PainelLeiturasComunicado comunicadoId={comunicadoSelecionado.id} />
                   )}
                 </div>
               </ScrollArea>

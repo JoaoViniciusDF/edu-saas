@@ -5,15 +5,13 @@ import { useQuery } from "@tanstack/react-query"
 import { dashboardRequests } from "@/lib/api/requests/dashboard"
 import { leituraRequests } from "@/lib/api/requests/configuracoes"
 import {
-  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  BookOpen,
+  ChevronDown,
   ClipboardList,
   GraduationCap,
-  Lightbulb,
-  Sparkles,
   Target,
-  TrendingUp,
   Users,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -32,6 +30,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -39,7 +38,27 @@ import {
   YAxis,
 } from "recharts"
 import { cn } from "@/lib/utils"
-import type { DashboardSerieItem } from "@/lib/api/dtos/dashboard"
+import type { DashboardSerieItem, DesempenhoMateriaItem } from "@/lib/api/dtos/dashboard"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import { Progress } from "@/components/ui/progress"
+import { queryKeys } from "@/lib/cache/query-keys"
+import { cadastrosRequests } from "@/lib/api/requests/configuracoes"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useAuth } from "@/componentes/provedores/provedor-auth"
+import { useTurmaAtiva } from "@/componentes/provedores/provedor-turma-ativa"
+import { useFilhoAtivo } from "@/componentes/provedores/provedor-filho-ativo"
+
+const CORES_GRAFICO = [
+  "oklch(0.646 0.222 41.116)",
+  "oklch(0.6 0.118 184.704)",
+  "oklch(0.398 0.07 227.392)",
+  "oklch(0.828 0.189 84.429)",
+  "oklch(0.769 0.188 70.08)",
+] as const
 
 function num(v: string | number | null | undefined): number {
   if (v == null) return 0
@@ -92,31 +111,90 @@ function CartaoResumo({ titulo, valor, descricao, icone, tendencia, corIcone }: 
 }
 
 export function ModuloDashboard() {
-  const [escopo, setEscopo] = React.useState<"geral" | "turma" | "aluno">("geral")
+  const { usuario } = useAuth()
+  const { turmaAtivaId } = useTurmaAtiva()
+  const { alunoAtivoId, filhos } = useFilhoAtivo()
+  const ehProfessor = usuario?.perfil === "professor"
+  const ehResponsavel = usuario?.perfil === "responsavel"
+
+  const hoje = new Date()
+  const inicioAno = `${hoje.getFullYear()}-01-01`
+  const hojeIso = hoje.toISOString().slice(0, 10)
+
+  const [escopo, setEscopo] = React.useState<"geral" | "turma" | "aluno">(
+    ehResponsavel ? "aluno" : ehProfessor ? "turma" : "geral"
+  )
   const [turmaSelecionada, setTurmaSelecionada] = React.useState("todas")
   const [alunoSelecionado, setAlunoSelecionado] = React.useState("todos")
-  const [dataInicio, setDataInicio] = React.useState("2026-01-01")
-  const [dataFim, setDataFim] = React.useState("2026-04-30")
+  const [dataInicio, setDataInicio] = React.useState(inicioAno)
+  const [dataFim, setDataFim] = React.useState(hojeIso)
 
-  const queryParams = {
-    turma_id: turmaSelecionada !== "todas" ? turmaSelecionada : undefined,
-    aluno_id: alunoSelecionado !== "todos" ? alunoSelecionado : undefined,
-    data_inicio: dataInicio,
-    data_fim: dataFim,
-  }
+  React.useEffect(() => {
+    if (ehProfessor && turmaAtivaId) {
+      setEscopo("turma")
+      setTurmaSelecionada(turmaAtivaId)
+    }
+  }, [ehProfessor, turmaAtivaId])
+
+  React.useEffect(() => {
+    if (ehResponsavel && alunoAtivoId) {
+      setEscopo("aluno")
+      setAlunoSelecionado(alunoAtivoId)
+    }
+  }, [ehResponsavel, alunoAtivoId])
+
+  const queryParams = React.useMemo(
+    () => ({
+      escopo: ehProfessor ? "turma" : ehResponsavel ? "aluno" : escopo,
+      turma_id: ehProfessor
+        ? turmaAtivaId ?? undefined
+        : escopo === "turma" && turmaSelecionada !== "todas"
+          ? turmaSelecionada
+          : undefined,
+      aluno_id: ehResponsavel
+        ? alunoAtivoId ?? undefined
+        : escopo === "aluno" && alunoSelecionado !== "todos"
+          ? alunoSelecionado
+          : undefined,
+      data_inicio: dataInicio,
+      data_fim: dataFim,
+    }),
+    [
+      escopo,
+      turmaSelecionada,
+      alunoSelecionado,
+      dataInicio,
+      dataFim,
+      ehProfessor,
+      ehResponsavel,
+      turmaAtivaId,
+      alunoAtivoId,
+    ]
+  )
 
   const { data: resumo, isLoading } = useQuery({
-    queryKey: ["dashboard", "resumo", escopo, ...Object.values(queryParams)],
-    queryFn: () => dashboardRequests.resumo({ escopo, ...queryParams }),
+    queryKey: queryKeys.dashboard.resumo(queryParams),
+    queryFn: () => dashboardRequests.resumo(queryParams),
   })
 
-  const { data: seriesData } = useQuery({
-    queryKey: ["dashboard", "series", ...Object.values(queryParams)],
+  const { data: seriesData, isLoading: loadingSeries } = useQuery({
+    queryKey: queryKeys.dashboard.series(queryParams),
     queryFn: () => dashboardRequests.series(queryParams),
   })
 
+  const { data: desempenhoAv, isLoading: loadingDesempenhoAv } = useQuery({
+    queryKey: queryKeys.dashboard.desempenhoAvaliacoes(queryParams),
+    queryFn: () => dashboardRequests.desempenhoAvaliacoes(queryParams),
+  })
+
+  const { data: alunosApi = [] } = useQuery({
+    queryKey: [...queryKeys.cadastros.alunos(), escopo, alunoAtivoId],
+    queryFn: () => cadastrosRequests.listAlunos(),
+    enabled: escopo === "aluno" || ehResponsavel,
+  })
+
   const { data: turmasApi = [] } = useQuery({
-    queryKey: ["turmas", "leitura"],
+    queryKey: queryKeys.turmas.resumo(),
     queryFn: () => leituraRequests.listTurmas(),
   })
 
@@ -131,12 +209,18 @@ export function ModuloDashboard() {
   )
 
   const alunos = React.useMemo(() => {
+    if (escopo === "aluno" && alunosApi.length > 0) {
+      return [
+        { id: "todos", nome: "Todos os alunos" },
+        ...alunosApi.map((a) => ({ id: a.id, nome: a.nome_exibicao })),
+      ]
+    }
     const nomes = new Map<string, string>()
     series.forEach((s) => {
       if (s.aluno_id && s.aluno_nome) nomes.set(s.aluno_id, s.aluno_nome)
     })
     return [{ id: "todos", nome: "Todos os alunos" }, ...Array.from(nomes, ([id, nome]) => ({ id, nome }))]
-  }, [series])
+  }, [series, escopo, alunosApi])
 
   const dadosDesempenhoTempo = React.useMemo(() => {
     const mapa = new Map<string, { mes: string; media: number; count: number }>()
@@ -170,11 +254,19 @@ export function ModuloDashboard() {
       a.count += 1
     })
     return Array.from(mapa.entries()).map(([disciplina, v]) => ({
-      disciplina: disciplina.length > 20 ? `${disciplina.slice(0, 8)}…` : disciplina,
+      disciplina: disciplina.length > 24 ? `${disciplina.slice(0, 22)}…` : disciplina,
       nota: Number((v.soma / Math.max(1, v.count)).toFixed(2)),
-      meta: 7.5,
     }))
   }, [series])
+
+  const domainMedia = React.useMemo(() => {
+    const vals = dadosDesempenhoTempo.map((d) => d.media).filter((v) => v > 0)
+    if (vals.length === 0) return [0, 10] as [number, number]
+    const min = Math.min(...vals)
+    const max = Math.max(...vals)
+    const pad = Math.max(0.5, (max - min) * 0.1)
+    return [Math.max(0, min - pad), Math.min(10, max + pad)] as [number, number]
+  }, [dadosDesempenhoTempo])
 
   const mediaGeral = resumo?.media_geral != null ? Number(resumo.media_geral) : 0
   const taxaAprovacao = React.useMemo(() => {
@@ -185,10 +277,7 @@ export function ModuloDashboard() {
   const pendenciasMedia = resumo?.pendentes_correcao ?? 0
   const totalAlunos = resumo?.total_alunos_escopo ?? 0
 
-  const disciplinaCritica = React.useMemo(() => {
-    if (dadosDisciplinas.length === 0) return null
-    return [...dadosDisciplinas].sort((a, b) => a.nota - b.nota)[0]
-  }, [dadosDisciplinas])
+  const materiasDesempenho: DesempenhoMateriaItem[] = desempenhoAv?.materias ?? []
 
   const descricaoEscopo =
     escopo === "geral"
@@ -204,7 +293,13 @@ export function ModuloDashboard() {
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl" style={{ fontFamily: "var(--font-display)" }}>
             Dashboard
           </h1>
-          <p className="mt-1 text-muted-foreground">Analise de desempenho com filtros por escopo e periodo</p>
+          <p className="mt-1 text-muted-foreground">
+            {ehResponsavel && alunoAtivoId
+              ? `Desempenho de ${filhos.find((f) => f.id === alunoAtivoId)?.nome ?? "filho selecionado"}`
+              : ehProfessor
+                ? "Desempenho da turma selecionada no menu lateral"
+                : "Analise de desempenho com filtros por escopo e periodo"}
+          </p>
         </div>
         <Badge variant="outline" className="w-fit gap-2 rounded-full px-4 py-2">
           <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -212,6 +307,7 @@ export function ModuloDashboard() {
         </Badge>
       </div>
 
+      {!ehProfessor && !ehResponsavel && (
       <Card className="rounded-2xl border-border/50 bg-card/80">
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="space-y-1">
@@ -271,8 +367,30 @@ export function ModuloDashboard() {
           </div>
         </CardContent>
       </Card>
+      )}
+
+      {(ehProfessor || ehResponsavel) && (
+        <Card className="rounded-2xl border-border/50 bg-card/80">
+          <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <LabelFiltro>Data inicio</LabelFiltro>
+              <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} className="h-10 rounded-xl" />
+            </div>
+            <div className="space-y-1">
+              <LabelFiltro>Data fim</LabelFiltro>
+              <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="h-10 rounded-xl" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-36 rounded-2xl" />
+          ))
+        ) : (
+          <>
         <CartaoResumo
           titulo="Total de Alunos"
           valor={String(totalAlunos)}
@@ -286,12 +404,11 @@ export function ModuloDashboard() {
           descricao="Todas as disciplinas"
           icone={<GraduationCap className="h-6 w-6 text-emerald-500" />}
           corIcone="bg-emerald-500/10"
-          tendencia={{ valor: mediaGeral >= 7 ? "+0.2" : "-0.1", positiva: mediaGeral >= 7 }}
         />
         <CartaoResumo
-          titulo="Avaliacoes"
+          titulo="Correcoes pendentes"
           valor={String(pendenciasMedia)}
-          descricao="Pendentes de correcao"
+          descricao="Submissoes aguardando correcao"
           icone={<ClipboardList className="h-6 w-6 text-amber-500" />}
           corIcone="bg-amber-500/10"
         />
@@ -301,8 +418,9 @@ export function ModuloDashboard() {
           descricao="Meta acima de 85%"
           icone={<Target className="h-6 w-6 text-violet-500" />}
           corIcone="bg-violet-500/10"
-          tendencia={{ valor: taxaAprovacao >= 85 ? "+2%" : "-1%", positiva: taxaAprovacao >= 85 }}
         />
+          </>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -313,30 +431,34 @@ export function ModuloDashboard() {
           </CardHeader>
           <CardContent>
             <div className="h-[280px] sm:h-[320px]">
+              {loadingSeries ? (
+                <Skeleton className="h-full w-full rounded-xl" />
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={dadosDesempenhoTempo}>
                   <defs>
-                    <linearGradient id="gradientPrimary" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    <linearGradient id="gradientChart1" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={CORES_GRAFICO[0]} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={CORES_GRAFICO[0]} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" vertical={false} />
-                  <XAxis dataKey="mes" className="text-xs" tick={{ fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                  <YAxis domain={[5, 10]} className="text-xs" tick={{ fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={30} />
+                  <XAxis dataKey="mes" className="text-xs" tick={{ fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <YAxis domain={domainMedia} className="text-xs" tick={{ fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} width={30} />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      borderColor: "hsl(var(--border))",
+                      backgroundColor: "var(--card)",
+                      borderColor: "var(--border)",
                       borderRadius: "12px",
                       boxShadow: "0 4px 12px -2px rgba(0,0,0,0.1)",
                     }}
-                    labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
+                    labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
                   />
                   <Legend wrapperStyle={{ paddingTop: "20px" }} formatter={(value) => <span className="text-sm text-muted-foreground">{value}</span>} />
-                  <Area type="monotone" dataKey="media" stroke="hsl(var(--primary))" strokeWidth={2.5} fill="url(#gradientPrimary)" name="Media geral" />
+                  <Area type="monotone" dataKey="media" stroke={CORES_GRAFICO[0]} strokeWidth={2.5} fill="url(#gradientChart1)" name="Media geral" />
                 </AreaChart>
               </ResponsiveContainer>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -344,29 +466,36 @@ export function ModuloDashboard() {
         <Card className="rounded-2xl border-border/50 bg-card/80 backdrop-blur-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-lg font-semibold">Desempenho por disciplina</CardTitle>
-            <CardDescription>Comparacao entre nota atual e meta</CardDescription>
+            <CardDescription>Notas por disciplina no periodo selecionado</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[280px] sm:h-[320px]">
+              {loadingSeries ? (
+                <Skeleton className="h-full w-full rounded-xl" />
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dadosDisciplinas} layout="vertical" barGap={4}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal vertical={false} />
-                  <XAxis type="number" domain={[0, 10]} className="text-xs" tick={{ fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                  <YAxis dataKey="disciplina" type="category" className="text-xs" tick={{ fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={70} />
+                  <XAxis type="number" domain={[0, 10]} className="text-xs" tick={{ fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <YAxis dataKey="disciplina" type="category" className="text-xs" tick={{ fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} width={90} />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      borderColor: "hsl(var(--border))",
+                      backgroundColor: "var(--card)",
+                      borderColor: "var(--border)",
                       borderRadius: "12px",
                       boxShadow: "0 4px 12px -2px rgba(0,0,0,0.1)",
                     }}
-                    labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
+                    labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
                   />
                   <Legend wrapperStyle={{ paddingTop: "20px" }} formatter={(value) => <span className="text-sm text-muted-foreground">{value}</span>} />
-                  <Bar dataKey="nota" fill="hsl(var(--primary))" radius={[0, 6, 6, 0]} name="Nota atual" />
-                  <Bar dataKey="meta" fill="hsl(var(--muted))" radius={[0, 6, 6, 0]} name="Meta" />
+                  <Bar dataKey="nota" radius={[0, 6, 6, 0]} name="Nota atual">
+                    {dadosDisciplinas.map((_, index) => (
+                      <Cell key={index} fill={CORES_GRAFICO[index % CORES_GRAFICO.length]} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -375,40 +504,82 @@ export function ModuloDashboard() {
       <Card className="rounded-2xl border-border/50 bg-card/80 backdrop-blur-sm">
         <CardHeader className="pb-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br from-primary to-primary/80 shadow-soft">
-              <Sparkles className="h-5 w-5 text-primary-foreground" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+              <BookOpen className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <CardTitle className="text-lg font-semibold">Insights</CardTitle>
-              <CardDescription>Analises e recomendacoes com base no filtro atual</CardDescription>
+              <CardTitle className="text-lg font-semibold">Desempenho nas avaliacoes</CardTitle>
+              <CardDescription>
+                Resultados por materia e assunto no periodo selecionado
+              </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <InsightCard
-              titulo={disciplinaCritica ? `Atenção em ${disciplinaCritica.disciplina}` : "Sem dados suficientes"}
-              descricao={
-                disciplinaCritica
-                  ? `${disciplinaCritica.disciplina} esta com media ${disciplinaCritica.nota.toFixed(1)}. Recomende revisoes orientadas para esse grupo.`
-                  : "Ajuste os filtros para visualizar metricas e recomendacoes."
-              }
-              icone={<AlertTriangle className="h-5 w-5 text-amber-500" />}
-              cor="bg-amber-500/10"
-            />
-            <InsightCard
-              titulo="Tendencia de desempenho"
-              descricao={`A media atual esta em ${mediaGeral.toFixed(1)} com taxa de aprovacao de ${taxaAprovacao.toFixed(0)}%.`}
-              icone={<TrendingUp className="h-5 w-5 text-emerald-500" />}
-              cor="bg-emerald-500/10"
-            />
-            <InsightCard
-              titulo="Acao recomendada"
-              descricao="Use a combinacao de escopo e periodo para identificar rapidamente onde atuar primeiro."
-              icone={<Lightbulb className="h-5 w-5 text-primary" />}
-              cor="bg-primary/10"
-            />
-          </div>
+        <CardContent className="space-y-3">
+          {loadingDesempenhoAv ? (
+            <Skeleton className="h-48 w-full rounded-xl" />
+          ) : materiasDesempenho.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhuma avaliacao concluida no escopo e periodo selecionados.
+            </p>
+          ) : (
+            materiasDesempenho.map((materia) => (
+              <Collapsible key={materia.id} defaultOpen className="rounded-xl border border-border/50">
+                <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-muted/30">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold">{materia.nome}</p>
+                    {materia.media_percentual != null && (
+                      <p className="text-sm text-muted-foreground">
+                        Media: {Math.round(materia.media_percentual)}%
+                      </p>
+                    )}
+                  </div>
+                  {materia.media_percentual != null && (
+                    <div className="hidden w-32 sm:block">
+                      <Progress value={materia.media_percentual} className="h-2" />
+                    </div>
+                  )}
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-2 border-t border-border/40 px-4 pb-4 pt-2">
+                  {materia.assuntos.map((assunto) => (
+                    <div key={assunto.id} className="rounded-lg bg-muted/20 p-3">
+                      <p className="text-sm font-medium">{assunto.nome}</p>
+                      {assunto.media_percentual != null && (
+                        <p className="text-xs text-muted-foreground">
+                          Media do assunto: {Math.round(assunto.media_percentual)}%
+                        </p>
+                      )}
+                      <ul className="mt-2 space-y-2">
+                        {assunto.avaliacoes.map((av) => (
+                          <li
+                            key={`${av.id}-${av.aluno_nome ?? ""}`}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/30 bg-card px-3 py-2 text-sm"
+                          >
+                            <span className="font-medium">{av.titulo}</span>
+                            <div className="flex items-center gap-2">
+                              {av.aluno_nome && (
+                                <span className="text-xs text-muted-foreground">{av.aluno_nome}</span>
+                              )}
+                              {av.percentual != null ? (
+                                <Badge variant="secondary" className="rounded-full">
+                                  {Math.round(av.percentual)}%
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="rounded-full">
+                                  {av.situacao}
+                                </Badge>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
+            ))
+          )}
         </CardContent>
       </Card>
     </div>
@@ -417,28 +588,4 @@ export function ModuloDashboard() {
 
 function LabelFiltro({ children }: { children: React.ReactNode }) {
   return <p className="text-xs font-medium text-muted-foreground">{children}</p>
-}
-
-function InsightCard({
-  titulo,
-  descricao,
-  icone,
-  cor,
-}: {
-  titulo: string
-  descricao: string
-  icone: React.ReactNode
-  cor: string
-}) {
-  return (
-    <div className="group cursor-pointer rounded-2xl border border-border/50 bg-secondary/30 p-5 transition-all duration-300 hover:border-primary/30 hover:bg-secondary/50">
-      <div className="flex items-start gap-4">
-        <div className={cn("shrink-0 rounded-xl p-2.5", cor)}>{icone}</div>
-        <div className="min-w-0 space-y-1.5">
-          <p className="text-sm font-semibold transition-colors group-hover:text-primary">{titulo}</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">{descricao}</p>
-        </div>
-      </div>
-    </div>
-  )
 }

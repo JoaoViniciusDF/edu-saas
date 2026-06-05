@@ -1,9 +1,11 @@
-"""initial schema — 27 tabelas EduSaaS
+"""schema completo EduSaaS (models atuais + índices/constraints)
 
 Revision ID: 001
 Revises:
 Create Date: 2026-05-20
 
+Inclui turma_professor, avaliacao.turma_id, conteudo_jsonb/instrucoes_jsonb
+e demais tabelas via Base.metadata.create_all — sem migrations incrementais redundantes.
 """
 
 from typing import Sequence, Union

@@ -10,16 +10,29 @@ import type {
   PresignResponse,
 } from "../dtos/conteudo"
 
+function queryTurmaAluno(turmaId?: string | null, alunoId?: string | null) {
+  const sp = new URLSearchParams()
+  if (turmaId) sp.set("turma_id", turmaId)
+  if (alunoId) sp.set("aluno_id", alunoId)
+  const q = sp.toString()
+  return q ? `?${q}` : ""
+}
+
 export const conteudoRequests = {
-  listPastas: () => bffRequest<PastaConteudoResponse[]>("/conteudo/consultar-pastas"),
+  listPastas: (turmaId?: string | null, alunoId?: string | null) =>
+    bffRequest<PastaConteudoResponse[]>(
+      `/conteudo/consultar-pastas${queryTurmaAluno(turmaId, alunoId)}`
+    ),
   createPasta: (body: PastaConteudoCreate) =>
     bffRequest<PastaConteudoResponse>("/conteudo/criar-pasta", { method: "POST", body }),
   patchPasta: (id: string, body: PastaConteudoPatch) =>
     bffRequest<PastaConteudoResponse>(`/conteudo/editar-pasta/${id}`, { method: "PUT", body }),
   deletePasta: (id: string) =>
     bffRequest<void>(`/conteudo/apagar-pasta/${id}`, { method: "DELETE" }),
-  listMateriais: (pastaId: string) =>
-    bffRequest<MaterialResponse[]>(`/conteudo/consultar-materiais/${pastaId}`),
+  listMateriais: (pastaId: string, alunoId?: string | null) =>
+    bffRequest<MaterialResponse[]>(
+      `/conteudo/consultar-materiais/${pastaId}${alunoId ? `?aluno_id=${alunoId}` : ""}`
+    ),
   createMaterial: (pastaId: string, body: MaterialCreate) =>
     bffRequest<MaterialResponse>(`/conteudo/criar-material/${pastaId}`, {
       method: "POST",

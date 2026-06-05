@@ -24,7 +24,8 @@ export interface DashboardResumo {
   insights: string[]
 }
 
-export interface DashboardQueryParams {
+export interface DashboardQueryParams
+  extends Record<string, string | number | boolean | null | undefined> {
   escopo?: string | null
   turma_id?: string | null
   aluno_id?: string | null
@@ -48,18 +49,30 @@ export interface DashboardSeriesResponse {
   items: DashboardSerieItem[]
 }
 
-export interface DashboardSerieItem {
-  periodo: string
-  turma_id?: string | null
-  turma_nome?: string | null
-  aluno_id?: string | null
+export interface DesempenhoAvaliacaoItem {
+  id: string
+  titulo: string
+  percentual?: number | null
+  nota_decimal?: string | number | null
+  situacao: string
+  enviada_em?: string | null
   aluno_nome?: string | null
-  disciplina?: string | null
-  media?: string | number | null
-  taxa_aprovacao?: string | number | null
-  pendentes_correcao?: number | null
 }
 
-export interface DashboardSeriesResponse {
-  items: DashboardSerieItem[]
+export interface DesempenhoAssuntoItem {
+  id: string
+  nome: string
+  media_percentual?: number | null
+  avaliacoes: DesempenhoAvaliacaoItem[]
+}
+
+export interface DesempenhoMateriaItem {
+  id: string
+  nome: string
+  media_percentual?: number | null
+  assuntos: DesempenhoAssuntoItem[]
+}
+
+export interface DashboardDesempenhoAvaliacoesResponse {
+  materias: DesempenhoMateriaItem[]
 }

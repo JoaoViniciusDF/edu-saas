@@ -87,6 +87,7 @@ class Professor(UUIDPrimaryKeyMixin, Base):
 
     usuario: Mapped["UsuarioConta"] = relationship(back_populates="professor")
     turmas_titulares: Mapped[list["Turma"]] = relationship(back_populates="professor_titular")
+    vinculos_turmas: Mapped[list["TurmaProfessor"]] = relationship(back_populates="professor")
     materias_autor: Mapped[list["MateriaCurricular"]] = relationship(
         back_populates="professor_autor"
     )
@@ -159,6 +160,28 @@ class AlunoResponsavel(UUIDPrimaryKeyMixin, Base):
     responsavel: Mapped["Responsavel"] = relationship(back_populates="vinculos_alunos")
 
 
+class TurmaProfessor(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "turma_professor"
+    __table_args__ = (
+        UniqueConstraint("turma_id", "professor_id", name="uq_turma_professor"),
+    )
+
+    turma_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("turma.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    professor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professor.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    eh_titular: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    turma: Mapped["Turma"] = relationship(back_populates="vinculos_professores")
+    professor: Mapped["Professor"] = relationship(back_populates="vinculos_turmas")
+
+
 class Turma(UUIDPrimaryKeyMixin, TimestampsMixin, Base):
     __tablename__ = "turma"
 
@@ -179,6 +202,10 @@ class Turma(UUIDPrimaryKeyMixin, TimestampsMixin, Base):
     instituicao: Mapped["Instituicao"] = relationship(back_populates="turmas")
     professor_titular: Mapped["Professor | None"] = relationship(
         back_populates="turmas_titulares"
+    )
+    vinculos_professores: Mapped[list["TurmaProfessor"]] = relationship(
+        back_populates="turma",
+        cascade="all, delete-orphan",
     )
     matriculas: Mapped[list["Matricula"]] = relationship(back_populates="turma")
     pastas_conteudo: Mapped[list["PastaConteudo"]] = relationship(back_populates="turma")

@@ -20,6 +20,19 @@ class ComunicadoListItem(BaseModel):
     preview_corpo: str | None = None
 
 
+class ComunicadoLeituraItem(BaseModel):
+    usuario_id: UUID
+    nome_exibicao: str
+    lido: bool
+    lido_em: datetime | None = None
+
+
+class ComunicadoLeiturasResponse(BaseModel):
+    total_destinatarios: int
+    total_lidos: int
+    itens: list[ComunicadoLeituraItem] = []
+
+
 class ComunicadoDetail(BaseModel):
     id: UUID
     titulo: str
@@ -29,6 +42,8 @@ class ComunicadoDetail(BaseModel):
     imagens_urls: list[str] = []
     destinatarios: list[DestinatarioRef] = []
     lido: bool = False
+    total_destinatarios: int | None = None
+    total_lidos: int | None = None
 
 
 class ComunicadoCreate(BaseModel):

@@ -1,16 +1,16 @@
 """bootstrap demo — instituição, usuários @edu.com.br e conteúdo didático
 
-Revision ID: 003
-Revises: 002
+Revision ID: 002
+Revises: 001
 """
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
-revision: str = "003"
-down_revision: Union[str, None] = "002"
+revision: str = "002"
+down_revision: Union[str, None] = "001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -169,6 +169,15 @@ def downgrade() -> None:
             """
             DELETE FROM professor
             WHERE usuario_id IN (SELECT id FROM usuario_conta WHERE instituicao_id = :inst_id)
+            """
+        ),
+        inst_param,
+    )
+    bind.execute(
+        sa.text(
+            """
+            DELETE FROM turma_professor
+            WHERE turma_id IN (SELECT id FROM turma WHERE instituicao_id = :inst_id)
             """
         ),
         inst_param,

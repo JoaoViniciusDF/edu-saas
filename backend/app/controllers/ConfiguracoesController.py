@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from app.api.deps import AuthUser, CurrentUser, DbSession, get_current_user_optional, require_perfis
 from app.core.config import get_settings
-from app.core.exceptions import not_found, unauthorized
+from app.core.exceptions import bad_request, not_found, unauthorized
 from app.models.enums import TipoPerfil
 from app.schemas.auth import LoginRequest, LoginResponse, RefreshRequest, UserMe, UserPreferencesPatch
 from app.schemas.common import PaginatedResponse
@@ -33,8 +33,19 @@ from app.schemas.configuracoes import (
     TurmaCreate,
     TurmaListItem,
     TurmaPatch,
+    TurmaResumoItem,
+    AssociarProfessoresTurmaLoteBody,
+    AssociarProfessorTurmasLoteBody,
+    AssociarUsuarioInstituicaoBody,
+    DesassociarProfessorTurmasLoteBody,
+    DesvincularResponsavelAlunosLoteBody,
+    LoteResultadoResponse,
+    MatriculasLoteCreate,
     UsuarioCreate,
     UsuarioCreateResponse,
+    UsuarioDetalheResponse,
+    UsuarioSuperAdminPatch,
+    VincularResponsavelAlunosLoteBody,
     VinculoResponsavelCreate,
     VisaoPlataforma,
 )
@@ -47,6 +58,10 @@ SuperAdminUser = Annotated[CurrentUser, Depends(require_perfis(TipoPerfil.super_
 CadastroGestaoUser = Annotated[
     CurrentUser,
     Depends(require_perfis(TipoPerfil.administrador, TipoPerfil.professor)),
+]
+GestaoInstituicaoUser = Annotated[
+    CurrentUser,
+    Depends(require_perfis(TipoPerfil.super_admin, TipoPerfil.administrador)),
 ]
 CadastroLeituraUser = Annotated[
     CurrentUser,
@@ -201,6 +216,131 @@ def consultar_detalhe_professor(
     return _svc(db).detalhe_professor_super(prof_id)
 
 
+@router.get("/consultar-detalhe-usuario/{usuario_id}", response_model=UsuarioDetalheResponse)
+def consultar_detalhe_usuario(
+    usuario_id: uuid.UUID, db: DbSession, _: SuperAdminUser
+) -> UsuarioDetalheResponse:
+    return _svc(db).detalhe_usuario_super(usuario_id)
+
+
+@router.put("/editar-usuario/{usuario_id}", response_model=UsuarioDetalheResponse)
+def editar_usuario(
+    usuario_id: uuid.UUID,
+    body: UsuarioSuperAdminPatch,
+    db: DbSession,
+    _: SuperAdminUser,
+) -> UsuarioDetalheResponse:
+    return _svc(db).editar_usuario_super(usuario_id, body)
+
+
+@router.delete("/desativar-usuario/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT)
+def desativar_usuario(
+    usuario_id: uuid.UUID, user: SuperAdminUser, db: DbSession
+) -> Response:
+    _svc(db).desativar_usuario_super(user, usuario_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/associar-usuario-instituicao/{usuario_id}",
+    response_model=UsuarioDetalheResponse,
+)
+def associar_usuario_instituicao(
+    usuario_id: uuid.UUID,
+    body: AssociarUsuarioInstituicaoBody,
+    db: DbSession,
+    _: SuperAdminUser,
+) -> UsuarioDetalheResponse:
+    return _svc(db).associar_usuario_instituicao_super(usuario_id, body)
+
+
+@router.post("/criar-matriculas-lote", response_model=LoteResultadoResponse, status_code=201)
+def criar_matriculas_lote(
+    body: MatriculasLoteCreate,
+    user: GestaoInstituicaoUser,
+    db: DbSession,
+) -> LoteResultadoResponse:
+    return _svc(db).criar_matriculas_lote(user, body)
+
+
+@router.post(
+    "/vincular-responsavel-alunos-lote",
+    response_model=LoteResultadoResponse,
+    status_code=201,
+)
+def vincular_responsavel_alunos_lote(
+    body: VincularResponsavelAlunosLoteBody, db: DbSession, _: SuperAdminUser
+) -> LoteResultadoResponse:
+    return _svc(db).vincular_responsavel_alunos_lote_super(body)
+
+
+@router.delete(
+    "/desvincular-responsavel-alunos-lote",
+    response_model=LoteResultadoResponse,
+)
+def desvincular_responsavel_alunos_lote(
+    body: DesvincularResponsavelAlunosLoteBody, db: DbSession, _: SuperAdminUser
+) -> LoteResultadoResponse:
+    return _svc(db).desvincular_responsavel_alunos_lote_super(body)
+
+
+@router.put("/associar-professor-turmas-lote", response_model=LoteResultadoResponse)
+def associar_professor_turmas_lote(
+    body: AssociarProfessorTurmasLoteBody,
+    user: GestaoInstituicaoUser,
+    db: DbSession,
+) -> LoteResultadoResponse:
+    if user.perfil == TipoPerfil.super_admin:
+        return _svc(db).associar_professor_turmas_lote_super(body)
+    if body.instituicao_id != user.instituicao_id:
+        raise bad_request("instituicao_id deve ser da sua instituição")
+    return _svc(db).associar_professor_turmas_lote(body)
+
+
+@router.post(
+    "/associar-professores-turma-lote",
+    response_model=LoteResultadoResponse,
+    status_code=201,
+)
+def associar_professores_turma_lote(
+    body: AssociarProfessoresTurmaLoteBody,
+    user: GestaoInstituicaoUser,
+    db: DbSession,
+) -> LoteResultadoResponse:
+    if user.perfil == TipoPerfil.super_admin:
+        return _svc(db).associar_professores_turma_lote_super(body)
+    if body.instituicao_id != user.instituicao_id:
+        raise bad_request("instituicao_id deve ser da sua instituição")
+    return _svc(db).associar_professores_turma_lote(body)
+
+
+@router.delete("/desassociar-professor-turmas-lote", response_model=LoteResultadoResponse)
+def desassociar_professor_turmas_lote(
+    body: DesassociarProfessorTurmasLoteBody,
+    user: GestaoInstituicaoUser,
+    db: DbSession,
+) -> LoteResultadoResponse:
+    if user.perfil == TipoPerfil.super_admin:
+        return _svc(db).desassociar_professor_turmas_lote_super(body)
+    if body.instituicao_id != user.instituicao_id:
+        raise bad_request("instituicao_id deve ser da sua instituição")
+    return _svc(db).desassociar_professor_turmas_lote(body)
+
+
+@router.put(
+    "/editar-matricula-super-admin/{mat_id}",
+    response_model=MatriculaResponse,
+)
+def editar_matricula_super_admin(
+    mat_id: uuid.UUID,
+    body: MatriculaPatch,
+    db: DbSession,
+    _: SuperAdminUser,
+    instituicao_id: uuid.UUID,
+) -> MatriculaResponse:
+    return _svc(db).patch_matricula_super(mat_id, instituicao_id, body)
+
+
 @router.post("/assumir-sessao/{usuario_id}", response_model=LoginResponse)
 def assumir_sessao(
     usuario_id: uuid.UUID, user: SuperAdminUser, db: DbSession
@@ -304,6 +444,16 @@ def consultar_turmas(
     return _svc(db).list_turmas(user, nome, instituicao_id)
 
 
+@router.get("/consultar-turmas-resumo", response_model=list[TurmaResumoItem])
+def consultar_turmas_resumo(
+    user: CadastroLeituraUser,
+    db: DbSession,
+    nome: str | None = None,
+    instituicao_id: uuid.UUID | None = None,
+) -> list[TurmaResumoItem]:
+    return _svc(db).list_turmas_resumo(user, nome, instituicao_id)
+
+
 @router.post("/criar-turma", response_model=TurmaListItem, status_code=201)
 def criar_turma(body: TurmaCreate, user: CadastroGestaoUser, db: DbSession) -> TurmaListItem:
     return _svc(db).create_turma_scoped(user, body)
@@ -330,6 +480,7 @@ def consultar_alunos_turma(
         CurrentUser,
         Depends(
             require_perfis(
+                TipoPerfil.super_admin,
                 TipoPerfil.administrador,
                 TipoPerfil.professor,
                 TipoPerfil.responsavel,
@@ -338,7 +489,10 @@ def consultar_alunos_turma(
     ],
     db: DbSession,
 ) -> list[AlunoListItem]:
-    return _svc(db).list_turma_alunos(user, turma_id)
+    svc = _svc(db)
+    if user.perfil == TipoPerfil.super_admin:
+        return svc.list_turma_alunos_super(turma_id)
+    return svc.list_turma_alunos(user, turma_id)
 
 
 @router.post("/criar-matricula", response_model=MatriculaResponse, status_code=201)
@@ -356,8 +510,20 @@ def editar_matricula(
 
 
 @router.get("/consultar-responsaveis", response_model=list[ResponsavelListItem])
-def consultar_responsaveis(user: CadastroGestaoUser, db: DbSession) -> list[ResponsavelListItem]:
-    return _svc(db).list_responsaveis_scoped(user)
+def consultar_responsaveis(
+    user: Annotated[
+        CurrentUser,
+        Depends(require_perfis(TipoPerfil.super_admin, TipoPerfil.administrador, TipoPerfil.professor)),
+    ],
+    db: DbSession,
+    instituicao_id: uuid.UUID | None = None,
+) -> list[ResponsavelListItem]:
+    svc = _svc(db)
+    if user.perfil == TipoPerfil.super_admin:
+        if not instituicao_id:
+            raise bad_request("instituicao_id é obrigatório para super_admin")
+        return svc.list_responsaveis(instituicao_id)
+    return svc.list_responsaveis_scoped(user)
 
 
 @router.get("/consultar-responsavel/{resp_id}", response_model=ResponsavelListItem)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser
@@ -25,6 +25,8 @@ from app.models.governanca import Aluno, AlunoResponsavel, Matricula, Professor,
 from app.schemas.comunicados import (
     ComunicadoCreate,
     ComunicadoDetail,
+    ComunicadoLeituraItem,
+    ComunicadoLeiturasResponse,
     ComunicadoListItem,
     ComunicadoPatch,
     DestinatarioRef,
@@ -54,50 +56,48 @@ class ComunicadosService:
         if not body.destinatarios:
             raise bad_request("Ao menos um destinatário")
 
-    def list_comunicados(self, user: CurrentUser) -> list[ComunicadoListItem]:
+    def list_comunicados(self, user: CurrentUser, limit: int = 50) -> list[ComunicadoListItem]:
         inst_id = self._inst_id(user)
+        leitura_join = and_(
+            ComunicadoLeitura.comunicado_id == Comunicado.id,
+            ComunicadoLeitura.usuario_id == user.id,
+        )
         if user.perfil in (TipoPerfil.professor, TipoPerfil.administrador):
-            rows = self.db.scalars(
-                select(Comunicado)
+            stmt = (
+                select(Comunicado, ComunicadoLeitura.id.isnot(None).label("lido"))
+                .outerjoin(ComunicadoLeitura, leitura_join)
                 .where(Comunicado.instituicao_id == inst_id)
                 .order_by(Comunicado.criado_em.desc())
-            ).all()
+                .limit(limit)
+            )
         else:
-            rows = self.db.scalars(
-                select(Comunicado)
+            stmt = (
+                select(Comunicado, ComunicadoLeitura.id.isnot(None).label("lido"))
                 .join(
                     ComunicadoDestinatarioEfetivo,
                     ComunicadoDestinatarioEfetivo.comunicado_id == Comunicado.id,
                 )
+                .outerjoin(ComunicadoLeitura, leitura_join)
                 .where(
                     Comunicado.instituicao_id == inst_id,
                     Comunicado.status == StatusComunicado.publicado,
                     ComunicadoDestinatarioEfetivo.usuario_id == user.id,
                 )
                 .order_by(Comunicado.criado_em.desc())
-            ).all()
-        result = []
-        for c in rows:
-            lido = bool(
-                self.db.scalar(
-                    select(ComunicadoLeitura).where(
-                        ComunicadoLeitura.comunicado_id == c.id,
-                        ComunicadoLeitura.usuario_id == user.id,
-                    )
-                )
+                .limit(limit)
             )
-            preview = (c.corpo or "")[:120]
-            result.append(
-                ComunicadoListItem(
-                    id=c.id,
-                    titulo=c.titulo,
-                    status=c.status,
-                    publicado_em=c.publicado_em,
-                    lido=lido,
-                    preview_corpo=preview,
-                )
+        rows = self.db.execute(stmt).all()
+        return [
+            ComunicadoListItem(
+                id=c.id,
+                titulo=c.titulo,
+                status=c.status,
+                publicado_em=c.publicado_em,
+                lido=bool(lido),
+                preview_corpo=(c.corpo or "")[:120],
             )
-        return result
+            for c, lido in rows
+        ]
 
     def get_comunicado(self, user: CurrentUser, cid: uuid.UUID) -> ComunicadoDetail:
         inst_id = self._inst_id(user)
@@ -111,7 +111,8 @@ class ComunicadosService:
             )
             if not ef or c.status != StatusComunicado.publicado:
                 raise not_found()
-        return self._detail(c, user.id)
+        incluir = user.perfil in (TipoPerfil.professor, TipoPerfil.administrador)
+        return self._detail(c, user.id, incluir_contagem=incluir)
 
     def _emissor_professor_id(self, user: CurrentUser, inst_id: uuid.UUID) -> uuid.UUID:
         if user.professor_id:
@@ -233,6 +234,10 @@ class ComunicadosService:
                 resp = self.db.get(Responsavel, d.entidade_id)
                 if resp:
                     usuario_ids.add(resp.usuario_id)
+            elif d.tipo == TipoDestinatarioComunicado.professor:
+                prof = self.db.get(Professor, d.entidade_id)
+                if prof:
+                    usuario_ids.add(prof.usuario_id)
         for uid in usuario_ids:
             exists = self.db.scalar(
                 select(ComunicadoDestinatarioEfetivo).where(
@@ -248,7 +253,32 @@ class ComunicadosService:
             if self.db.get(UsuarioConta, uid):
                 pass
 
-    def _detail(self, c: Comunicado, usuario_id: uuid.UUID) -> ComunicadoDetail:
+    def _contagem_leituras(self, comunicado_id: uuid.UUID) -> tuple[int, int]:
+        efetivos = self.db.scalars(
+            select(ComunicadoDestinatarioEfetivo.usuario_id).where(
+                ComunicadoDestinatarioEfetivo.comunicado_id == comunicado_id
+            )
+        ).all()
+        total = len(efetivos)
+        if total == 0:
+            return 0, 0
+        lidos = self.db.scalar(
+            select(func.count())
+            .select_from(ComunicadoLeitura)
+            .where(
+                ComunicadoLeitura.comunicado_id == comunicado_id,
+                ComunicadoLeitura.usuario_id.in_(efetivos),
+            )
+        )
+        return total, int(lidos or 0)
+
+    def _detail(
+        self,
+        c: Comunicado,
+        usuario_id: uuid.UUID,
+        *,
+        incluir_contagem: bool = False,
+    ) -> ComunicadoDetail:
         lido = bool(
             self.db.scalar(
                 select(ComunicadoLeitura).where(
@@ -257,6 +287,10 @@ class ComunicadosService:
                 )
             )
         )
+        total_dest = None
+        total_lidos = None
+        if incluir_contagem and c.status == StatusComunicado.publicado:
+            total_dest, total_lidos = self._contagem_leituras(c.id)
         return ComunicadoDetail(
             id=c.id,
             titulo=c.titulo,
@@ -268,4 +302,68 @@ class ComunicadosService:
                 DestinatarioRef(tipo=d.tipo, id=d.entidade_id) for d in c.destinatarios
             ],
             lido=lido,
+            total_destinatarios=total_dest,
+            total_lidos=total_lidos,
         )
+
+    def consultar_leituras(
+        self, user: CurrentUser, cid: uuid.UUID
+    ) -> ComunicadoLeiturasResponse:
+        if user.perfil not in (TipoPerfil.professor, TipoPerfil.administrador):
+            raise forbidden()
+        inst_id = self._inst_id(user)
+        c = self._comunicado_tenant(cid, inst_id)
+        efetivos = self.db.scalars(
+            select(ComunicadoDestinatarioEfetivo).where(
+                ComunicadoDestinatarioEfetivo.comunicado_id == c.id
+            )
+        ).all()
+        itens: list[ComunicadoLeituraItem] = []
+        for ef in efetivos:
+            u = self.db.get(UsuarioConta, ef.usuario_id)
+            leitura = self.db.scalar(
+                select(ComunicadoLeitura).where(
+                    ComunicadoLeitura.comunicado_id == c.id,
+                    ComunicadoLeitura.usuario_id == ef.usuario_id,
+                )
+            )
+            itens.append(
+                ComunicadoLeituraItem(
+                    usuario_id=ef.usuario_id,
+                    nome_exibicao=u.nome_exibicao if u else str(ef.usuario_id),
+                    lido=leitura is not None,
+                    lido_em=leitura.lido_em if leitura else None,
+                )
+            )
+        itens.sort(key=lambda x: (not x.lido, x.nome_exibicao))
+        lidos = sum(1 for i in itens if i.lido)
+        return ComunicadoLeiturasResponse(
+            total_destinatarios=len(itens),
+            total_lidos=lidos,
+            itens=itens,
+        )
+
+    def marcar_todos_lidos(self, user: CurrentUser) -> None:
+        inst_id = self._inst_id(user)
+        rows = self.db.scalars(
+            select(Comunicado)
+            .join(
+                ComunicadoDestinatarioEfetivo,
+                ComunicadoDestinatarioEfetivo.comunicado_id == Comunicado.id,
+            )
+            .where(
+                Comunicado.instituicao_id == inst_id,
+                Comunicado.status == StatusComunicado.publicado,
+                ComunicadoDestinatarioEfetivo.usuario_id == user.id,
+            )
+        ).all()
+        for c in rows:
+            existing = self.db.scalar(
+                select(ComunicadoLeitura).where(
+                    ComunicadoLeitura.comunicado_id == c.id,
+                    ComunicadoLeitura.usuario_id == user.id,
+                )
+            )
+            if not existing:
+                self.db.add(ComunicadoLeitura(comunicado_id=c.id, usuario_id=user.id))
+        self.db.commit()

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Bell, Check, Circle, Command, Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -18,11 +19,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { AlternadorTema } from "@/componentes/alternador-tema"
 import { FaixaImpersonacao } from "@/componentes/layout/faixa-impersonacao"
 import { useAuth } from "@/componentes/provedores/provedor-auth"
-import type { NotificacaoItem } from "@/lib/api/dtos/dashboard"
 import type { SearchHit } from "@/lib/api/dtos/dashboard"
 import { dashboardRequests } from "@/lib/api/requests/dashboard"
+import { queryKeys } from "@/lib/cache/query-keys"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
+import { SeletorFilhoAtivo } from "@/componentes/layout/seletor-filho-ativo"
 
 const LABEL_PERFIL: Record<string, string> = {
   super_admin: "Super Admin",
@@ -35,13 +37,20 @@ const LABEL_PERFIL: Record<string, string> = {
 export function Cabecalho() {
   const { usuario, logout } = useAuth()
   const router = useRouter()
-  const [notificacoes, setNotificacoes] = React.useState<NotificacaoItem[]>([])
   const [busca, setBusca] = React.useState("")
-  const [resultadosBusca, setResultadosBusca] = React.useState<SearchHit[]>([])
+  const [buscaDebounced, setBuscaDebounced] = React.useState("")
   const [buscaAberta, setBuscaAberta] = React.useState(false)
   const [painelAberto, setPainelAberto] = React.useState(false)
   const [larguraPainel, setLarguraPainel] = React.useState(420)
   const [arrastandoResize, setArrastandoResize] = React.useState(false)
+
+  const qc = useQueryClient()
+
+  const { data: notificacoes = [] } = useQuery({
+    queryKey: queryKeys.notificacoes(),
+    queryFn: () => dashboardRequests.notificacoes(),
+    enabled: painelAberto,
+  })
 
   const naoLidas = notificacoes.filter((item) => !item.lida_flag).length
   const iniciais = usuario?.nome_exibicao
@@ -52,25 +61,19 @@ export function Cabecalho() {
     .toUpperCase() ?? "?"
 
   React.useEffect(() => {
-    dashboardRequests
-      .notificacoes()
-      .then(setNotificacoes)
-      .catch(() => setNotificacoes([]))
-  }, [])
-
-  React.useEffect(() => {
     if (busca.trim().length < 2) {
-      setResultadosBusca([])
+      setBuscaDebounced("")
       return
     }
-    const t = setTimeout(() => {
-      dashboardRequests
-        .search(busca.trim())
-        .then(setResultadosBusca)
-        .catch(() => setResultadosBusca([]))
-    }, 300)
+    const t = setTimeout(() => setBuscaDebounced(busca.trim()), 300)
     return () => clearTimeout(t)
   }, [busca])
+
+  const { data: resultadosBusca = [] } = useQuery({
+    queryKey: ["search", buscaDebounced],
+    queryFn: () => dashboardRequests.search(buscaDebounced),
+    enabled: buscaDebounced.length >= 2,
+  })
 
   React.useEffect(() => {
     if (!arrastandoResize) return
@@ -93,16 +96,12 @@ export function Cabecalho() {
 
   const marcarComoLida = async (notificacaoId: string) => {
     await dashboardRequests.marcarNotificacaoLida(notificacaoId)
-    setNotificacoes((prev) =>
-      prev.map((item) =>
-        item.id === notificacaoId ? { ...item, lida_flag: true } : item
-      )
-    )
+    void qc.invalidateQueries({ queryKey: queryKeys.notificacoes() })
   }
 
   const marcarTodasComoLidas = async () => {
     await dashboardRequests.marcarTodasLidas()
-    setNotificacoes((prev) => prev.map((item) => ({ ...item, lida_flag: true })))
+    void qc.invalidateQueries({ queryKey: queryKeys.notificacoes() })
   }
 
   return (
@@ -150,6 +149,7 @@ export function Cabecalho() {
         </div>
 
         <div className="flex items-center gap-2">
+          <SeletorFilhoAtivo />
           <Button
             variant="ghost"
             size="icon"
@@ -186,10 +186,6 @@ export function Cabecalho() {
                   <p className="text-xs leading-none text-muted-foreground">{usuario?.email}</p>
                 </div>
               </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="mx-2 cursor-pointer rounded-lg px-4 py-2.5">Meu Perfil</DropdownMenuItem>
-              <DropdownMenuItem className="mx-2 cursor-pointer rounded-lg px-4 py-2.5">Configurações</DropdownMenuItem>
-              <DropdownMenuItem className="mx-2 cursor-pointer rounded-lg px-4 py-2.5">Ajuda e Suporte</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="mx-2 cursor-pointer rounded-lg px-4 py-2.5 text-destructive focus:text-destructive"

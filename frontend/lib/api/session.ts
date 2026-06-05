@@ -10,28 +10,43 @@ export const cookieOptions = {
   path: "/",
 }
 
-/** Lê claim impersonator_id do JWT (sem validar expiração). */
-export function impersonatorIdFromAccessToken(token: string | undefined | null): string | null {
-  if (!token) return null
+const PERFIS_VALIDOS = new Set([
+  "super_admin",
+  "administrador",
+  "professor",
+  "aluno",
+  "responsavel",
+])
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
-    const payload = JSON.parse(
+    return JSON.parse(
       Buffer.from(token.split(".")[1], "base64url").toString("utf8")
-    ) as { impersonator_id?: string; sub?: string }
-    return payload.impersonator_id ?? null
+    ) as Record<string, unknown>
   } catch {
     return null
   }
 }
 
+/** Lê claim perfil do JWT (sem validar expiração). */
+export function perfilFromAccessToken(token: string | undefined | null): string | null {
+  if (!token) return null
+  const payload = decodeJwtPayload(token)
+  const perfil = payload?.perfil
+  if (typeof perfil !== "string" || !PERFIS_VALIDOS.has(perfil)) return null
+  return perfil
+}
+
+/** Lê claim impersonator_id do JWT (sem validar expiração). */
+export function impersonatorIdFromAccessToken(token: string | undefined | null): string | null {
+  if (!token) return null
+  const payload = decodeJwtPayload(token) as { impersonator_id?: string } | null
+  return payload?.impersonator_id ?? null
+}
+
 /** Sub (usuario_id) do JWT — usado para obter impersonator a partir do token SA em backup. */
 export function subjectFromAccessToken(token: string | undefined | null): string | null {
   if (!token) return null
-  try {
-    const payload = JSON.parse(
-      Buffer.from(token.split(".")[1], "base64url").toString("utf8")
-    ) as { sub?: string }
-    return payload.sub ?? null
-  } catch {
-    return null
-  }
+  const payload = decodeJwtPayload(token) as { sub?: string } | null
+  return payload?.sub ?? null
 }

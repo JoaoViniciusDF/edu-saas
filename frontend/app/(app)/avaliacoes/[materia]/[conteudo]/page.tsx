@@ -13,13 +13,15 @@ export default function AvaliacoesConteudoPage({
 }) {
   const { materia, conteudo } = use(params)
   const router = useRouter()
-  const { obterContextoRota } = useAvaliacoes()
+  const { obterContextoRota, carregando, materiaAtivaCarregando } = useAvaliacoes()
   const contextoExiste = Boolean(obterContextoRota(materia, conteudo))
 
   React.useEffect(() => {
+    if (carregando || materiaAtivaCarregando) return
     if (!contextoExiste) router.replace(`/avaliacoes/${materia}`)
-  }, [contextoExiste, materia, router])
+  }, [contextoExiste, carregando, materiaAtivaCarregando, materia, router])
 
+  if (carregando || materiaAtivaCarregando) return null
   if (!contextoExiste) return null
 
   return <ModuloAvaliacoes materiaId={materia} conteudoId={conteudo} />

@@ -1,16 +1,16 @@
 """
 Bootstrap idempotente — dados demo EduSaaS (@edu.com.br / admin123).
 
-Usado pela migration Alembic 003 e pelo startup Docker (scripts.seed).
+Usado pela migration Alembic 002 e opcionalmente por `python -m scripts.seed`.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.database import SessionLocal
@@ -22,6 +22,7 @@ from app.models import (
     Avaliacao,
     Comunicado,
     ComunicadoDestinatario,
+    ComunicadoDestinatarioEfetivo,
     DashboardFatoDesempenho,
     Instituicao,
     MateriaCurricular,
@@ -31,8 +32,11 @@ from app.models import (
     PastaConteudo,
     Professor,
     Questao,
+    RespostaQuestao,
     Responsavel,
+    Submissao,
     Turma,
+    TurmaProfessor,
     UsuarioConta,
 )
 from app.models.enums import (
@@ -55,26 +59,166 @@ MATERIAS_DEMO = [
         "slug": "matematica",
         "cor": "blue",
         "professor_email": "professor@edu.com.br",
-        "avaliacao_status": StatusAvaliacao.publicada,
-        "questoes": 2,
     },
     {
         "nome": "Português",
         "slug": "portugues",
         "cor": "green",
         "professor_email": "professor2@edu.com.br",
-        "avaliacao_status": StatusAvaliacao.rascunho,
-        "questoes": 1,
     },
     {
         "nome": "Ciências",
         "slug": "ciencias",
         "cor": "orange",
         "professor_email": "professor@edu.com.br",
-        "avaliacao_status": StatusAvaliacao.rascunho,
-        "questoes": 1,
     },
 ]
+
+
+def _limpar_avaliacoes_demo(db: Session, instituicao_id: Any) -> None:
+    """Remove avaliações/questões do seed antigo; provas são criadas manualmente na demo."""
+    materia_ids = db.scalars(
+        select(MateriaCurricular.id).where(
+            MateriaCurricular.instituicao_id == instituicao_id
+        )
+    ).all()
+    if not materia_ids:
+        return
+
+    assunto_ids = db.scalars(
+        select(Assunto.id).where(Assunto.materia_id.in_(materia_ids))
+    ).all()
+    if not assunto_ids:
+        return
+
+    pasta_ids = db.scalars(
+        select(PastaAvaliacoes.id).where(PastaAvaliacoes.assunto_id.in_(assunto_ids))
+    ).all()
+    if not pasta_ids:
+        return
+
+    avaliacao_ids = db.scalars(
+        select(Avaliacao.id).where(Avaliacao.pasta_id.in_(pasta_ids))
+    ).all()
+    if avaliacao_ids:
+        submissao_ids = db.scalars(
+            select(Submissao.id).where(Submissao.avaliacao_id.in_(avaliacao_ids))
+        ).all()
+        if submissao_ids:
+            db.execute(
+                delete(RespostaQuestao).where(
+                    RespostaQuestao.submissao_id.in_(submissao_ids)
+                )
+            )
+            db.execute(delete(Submissao).where(Submissao.id.in_(submissao_ids)))
+        db.execute(delete(Questao).where(Questao.avaliacao_id.in_(avaliacao_ids)))
+        db.execute(delete(Avaliacao).where(Avaliacao.id.in_(avaliacao_ids)))
+
+    db.execute(delete(PastaAvaliacoes).where(PastaAvaliacoes.id.in_(pasta_ids)))
+    db.flush()
+
+
+def _expandir_destinatarios_comunicado(db: Session, comunicado: Comunicado) -> None:
+    usuario_ids: set[Any] = set()
+    for d in comunicado.destinatarios:
+        if d.tipo == TipoDestinatarioComunicado.aluno:
+            aluno = db.get(Aluno, d.entidade_id)
+            if aluno:
+                usuario_ids.add(aluno.usuario_id)
+        elif d.tipo == TipoDestinatarioComunicado.turma:
+            matriculas = db.scalars(
+                select(Matricula).where(
+                    Matricula.turma_id == d.entidade_id,
+                    Matricula.situacao == SituacaoMatricula.ativa,
+                )
+            ).all()
+            for mat in matriculas:
+                aluno = db.get(Aluno, mat.aluno_id)
+                if aluno:
+                    usuario_ids.add(aluno.usuario_id)
+        elif d.tipo == TipoDestinatarioComunicado.responsavel:
+            resp = db.get(Responsavel, d.entidade_id)
+            if resp:
+                usuario_ids.add(resp.usuario_id)
+        elif d.tipo == TipoDestinatarioComunicado.professor:
+            prof = db.get(Professor, d.entidade_id)
+            if prof:
+                usuario_ids.add(prof.usuario_id)
+    for uid in usuario_ids:
+        existe = db.scalar(
+            select(ComunicadoDestinatarioEfetivo).where(
+                ComunicadoDestinatarioEfetivo.comunicado_id == comunicado.id,
+                ComunicadoDestinatarioEfetivo.usuario_id == uid,
+            )
+        )
+        if not existe:
+            db.add(ComunicadoDestinatarioEfetivo(comunicado_id=comunicado.id, usuario_id=uid))
+
+
+def _seed_avaliacao_demo(
+    db: Session,
+    *,
+    materia: MateriaCurricular,
+    turma: Turma,
+    professor: Professor,
+) -> None:
+    assunto = db.scalar(
+        select(Assunto).where(Assunto.materia_id == materia.id, Assunto.nome == "Unidade 1")
+    )
+    if not assunto:
+        return
+
+    pasta = db.scalar(
+        select(PastaAvaliacoes).where(
+            PastaAvaliacoes.assunto_id == assunto.id,
+            PastaAvaliacoes.nome == "Prova 1 — Unidade",
+        )
+    )
+    if not pasta:
+        pasta = PastaAvaliacoes(assunto_id=assunto.id, nome="Prova 1 — Unidade")
+        db.add(pasta)
+        db.flush()
+
+    av = db.scalar(
+        select(Avaliacao).where(
+            Avaliacao.pasta_id == pasta.id,
+            Avaliacao.titulo == "Avaliação diagnóstica — Matemática",
+        )
+    )
+    if not av:
+        av = Avaliacao(
+            pasta_id=pasta.id,
+            turma_id=turma.id,
+            titulo="Avaliação diagnóstica — Matemática",
+            status=StatusAvaliacao.publicada,
+            publicado_em=datetime.now(UTC),
+            prazo_utc=datetime.now(UTC) + timedelta(days=30),
+            versao=1,
+        )
+        db.add(av)
+        db.flush()
+        db.add(
+            Questao(
+                avaliacao_id=av.id,
+                ordem=1,
+                tipo=TipoQuestao.multipla_escolha,
+                enunciado="Quanto é 2 + 2?",
+                alternativas_jsonb=["3", "4", "5", "6"],
+                indice_gabarito=1,
+                peso=Decimal("1"),
+            )
+        )
+        db.add(
+            Questao(
+                avaliacao_id=av.id,
+                ordem=2,
+                tipo=TipoQuestao.multipla_escolha,
+                enunciado="Qual é o dobro de 5?",
+                alternativas_jsonb=["8", "10", "12", "15"],
+                indice_gabarito=1,
+                peso=Decimal("1"),
+            )
+        )
 
 
 def _get_or_create_usuario(
@@ -159,6 +303,8 @@ def _bootstrap(db: Session) -> Instituicao:
         )
         db.add(inst)
         db.flush()
+
+    _limpar_avaliacoes_demo(db, inst.id)
 
     _get_or_create_usuario(
         db,
@@ -266,6 +412,23 @@ def _bootstrap(db: Session) -> Instituicao:
         db.add(turma)
         db.flush()
 
+    for prof_email, prof_ent in professores_por_email.items():
+        eh_titular = prof_ent.id == professor_titular.id
+        vinculo_tp = db.scalar(
+            select(TurmaProfessor).where(
+                TurmaProfessor.turma_id == turma.id,
+                TurmaProfessor.professor_id == prof_ent.id,
+            )
+        )
+        if not vinculo_tp:
+            db.add(
+                TurmaProfessor(
+                    turma_id=turma.id,
+                    professor_id=prof_ent.id,
+                    eh_titular=eh_titular,
+                )
+            )
+
     for aluno_ent in (aluno, aluno2):
         matricula = db.scalar(
             select(Matricula).where(
@@ -315,76 +478,6 @@ def _bootstrap(db: Session) -> Instituicao:
             assunto = Assunto(materia_id=materia.id, nome="Unidade 1", ordem=0)
             db.add(assunto)
             db.flush()
-
-        pasta_av = db.scalar(
-            select(PastaAvaliacoes).where(
-                PastaAvaliacoes.assunto_id == assunto.id,
-                PastaAvaliacoes.nome == "Avaliações Bimestre 1",
-            )
-        )
-        if not pasta_av:
-            pasta_av = PastaAvaliacoes(
-                assunto_id=assunto.id,
-                nome="Avaliações Bimestre 1",
-            )
-            db.add(pasta_av)
-            db.flush()
-
-        titulo_av = f"Avaliação {spec['nome']} — Bimestre 1"
-        avaliacao = db.scalar(
-            select(Avaliacao).where(
-                Avaliacao.pasta_id == pasta_av.id,
-                Avaliacao.titulo == titulo_av,
-            )
-        )
-        if not avaliacao:
-            avaliacao = Avaliacao(
-                pasta_id=pasta_av.id,
-                titulo=titulo_av,
-                status=spec["avaliacao_status"],
-                instrucoes_jsonb={
-                    "texto": f"Leia com atenção as questões de {spec['nome']}. Boa prova!"
-                },
-            )
-            db.add(avaliacao)
-            db.flush()
-        else:
-            avaliacao.status = spec["avaliacao_status"]
-
-        questoes_data = [
-            (
-                1,
-                f"Questão 1 — {spec['nome']}: conceitos básicos",
-                ["Alternativa A", "Alternativa B", "Alternativa C", "Alternativa D"],
-                1,
-            ),
-            (
-                2,
-                f"Questão 2 — {spec['nome']}: aplicação",
-                ["Opção 1", "Opção 2", "Opção 3", "Opção 4"],
-                1,
-            ),
-        ]
-        for ordem, enunciado, alternativas, gabarito in questoes_data[: spec["questoes"]]:
-            questao = db.scalar(
-                select(Questao).where(
-                    Questao.avaliacao_id == avaliacao.id,
-                    Questao.ordem == ordem,
-                )
-            )
-            if not questao:
-                db.add(
-                    Questao(
-                        avaliacao_id=avaliacao.id,
-                        ordem=ordem,
-                        tipo=TipoQuestao.multipla_escolha,
-                        enunciado=enunciado,
-                        alternativas_jsonb=alternativas,
-                        indice_gabarito=gabarito,
-                        peso=Decimal("1"),
-                        conteudo_jsonb={"blocos": [{"tipo": "texto", "conteudo": enunciado}]},
-                    )
-                )
 
         pasta_conteudo = db.scalar(
             select(PastaConteudo).where(
@@ -451,6 +544,26 @@ def _bootstrap(db: Session) -> Instituicao:
             )
         )
 
+    dest_turma = db.scalar(
+        select(ComunicadoDestinatario).where(
+            ComunicadoDestinatario.comunicado_id == comunicado.id,
+            ComunicadoDestinatario.tipo == TipoDestinatarioComunicado.turma,
+        )
+    )
+    if not dest_turma:
+        db.add(
+            ComunicadoDestinatario(
+                comunicado_id=comunicado.id,
+                tipo=TipoDestinatarioComunicado.turma,
+                entidade_id=turma.id,
+            )
+        )
+        db.flush()
+    if comunicado.status == StatusComunicado.rascunho:
+        comunicado.status = StatusComunicado.publicado
+        db.flush()
+    _expandir_destinatarios_comunicado(db, comunicado)
+
     materia_mat = db.scalar(
         select(MateriaCurricular).where(
             MateriaCurricular.instituicao_id == inst.id,
@@ -458,6 +571,13 @@ def _bootstrap(db: Session) -> Instituicao:
         )
     )
     if materia_mat:
+        _seed_avaliacao_demo(
+            db,
+            materia=materia_mat,
+            turma=turma,
+            professor=professor_titular,
+        )
+
         for periodo, media, taxa in [
             (date(2026, 1, 14), Decimal("7.1"), Decimal("0.88")),
             (date(2026, 2, 10), Decimal("7.4"), Decimal("0.90")),

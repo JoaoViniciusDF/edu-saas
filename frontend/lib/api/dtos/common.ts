@@ -17,7 +17,7 @@ export type TipoPerfil =
   | "aluno"
   | "responsavel"
 
-export type StatusAvaliacao = "rascunho" | "publicada" | "encerrada"
+export type StatusAvaliacao = "rascunho" | "publicada" | "encerrada" | "inativa"
 export type StatusSubmissao =
   | "rascunho"
   | "enviada"
@@ -26,5 +26,5 @@ export type StatusSubmissao =
 export type TipoQuestao = "multipla_escolha" | "texto_aberto"
 export type TipoAnexoMaterial = "pdf" | "audio" | "imagem" | "video" | "nota"
 export type StatusComunicado = "rascunho" | "publicado"
-export type TipoDestinatarioComunicado = "aluno" | "turma" | "responsavel"
+export type TipoDestinatarioComunicado = "aluno" | "turma" | "responsavel" | "professor"
 export type SituacaoMatricula = "ativa" | "encerrada" | "transferida"

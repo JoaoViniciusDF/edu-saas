@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.api.deps import CurrentUser, DbSession, require_perfis
 from app.models.enums import TipoPerfil
@@ -16,8 +16,11 @@ from app.schemas.avaliacoes import (
     AssuntoResponse,
     AvaliacaoCreate,
     AvaliacaoDetail,
+    AvaliacaoDuplicar,
     AvaliacaoListItem,
     AvaliacaoPatch,
+    AvaliacaoPublicar,
+    AvaliacaoReabrir,
     MateriaCreate,
     MateriaPatch,
     MateriaResponse,
@@ -29,6 +32,7 @@ from app.schemas.avaliacoes import (
     QuestoesBulkReplace,
     QuestoesReorder,
     SubmissaoPatch,
+    SubmissoesAvaliacaoProfessor,
     SubmissaoResponse,
 )
 from app.services.avaliacoes_service import AvaliacoesService
@@ -37,6 +41,7 @@ router = APIRouter(prefix="/avaliacoes", tags=["Avaliações"])
 
 DocenteUser = Annotated[CurrentUser, Depends(require_perfis(TipoPerfil.professor, TipoPerfil.administrador))]
 AlunoUser = Annotated[CurrentUser, Depends(require_perfis(TipoPerfil.aluno))]
+ResponsavelUser = Annotated[CurrentUser, Depends(require_perfis(TipoPerfil.responsavel))]
 
 
 def _svc(db: DbSession) -> AvaliacoesService:
@@ -68,9 +73,12 @@ def apagar_materia(materia_id: uuid.UUID, user: DocenteUser, db: DbSession) -> R
 
 @router.get("/consultar-arvore-materia/{materia_id}", response_model=ArvoreMateria)
 def consultar_arvore_materia(
-    materia_id: uuid.UUID, user: DocenteUser, db: DbSession
+    materia_id: uuid.UUID,
+    user: DocenteUser,
+    db: DbSession,
+    turma_id: uuid.UUID | None = Query(None),
 ) -> ArvoreMateria:
-    return _svc(db).get_arvore(user, materia_id)
+    return _svc(db).get_arvore(user, materia_id, turma_id=turma_id)
 
 
 @router.post("/criar-assunto/{materia_id}", response_model=AssuntoResponse, status_code=201)
@@ -114,9 +122,12 @@ def editar_pasta(
 
 @router.get("/consultar-avaliacoes-pasta/{pasta_id}", response_model=list[AvaliacaoListItem])
 def consultar_avaliacoes_pasta(
-    pasta_id: uuid.UUID, user: DocenteUser, db: DbSession
+    pasta_id: uuid.UUID,
+    user: DocenteUser,
+    db: DbSession,
+    turma_id: uuid.UUID | None = Query(None),
 ) -> list[AvaliacaoListItem]:
-    return _svc(db).list_avaliacoes_pasta(user, pasta_id)
+    return _svc(db).list_avaliacoes_pasta(user, pasta_id, turma_id=turma_id)
 
 
 @router.post("/criar-avaliacao/{pasta_id}", response_model=AvaliacaoDetail, status_code=201)
@@ -149,9 +160,12 @@ def salvar_rascunho_avaliacao(
 
 @router.post("/publicar-avaliacao/{avaliacao_id}", response_model=AvaliacaoDetail)
 def publicar_avaliacao(
-    avaliacao_id: uuid.UUID, user: DocenteUser, db: DbSession
+    avaliacao_id: uuid.UUID,
+    body: AvaliacaoPublicar,
+    user: DocenteUser,
+    db: DbSession,
 ) -> AvaliacaoDetail:
-    return _svc(db).publicar(user, avaliacao_id)
+    return _svc(db).publicar(user, avaliacao_id, body)
 
 
 @router.post("/encerrar-avaliacao/{avaliacao_id}", response_model=AvaliacaoDetail)
@@ -159,6 +173,71 @@ def encerrar_avaliacao(
     avaliacao_id: uuid.UUID, user: DocenteUser, db: DbSession
 ) -> AvaliacaoDetail:
     return _svc(db).encerrar(user, avaliacao_id)
+
+
+@router.post("/inativar-avaliacao/{avaliacao_id}", response_model=AvaliacaoDetail)
+def inativar_avaliacao(
+    avaliacao_id: uuid.UUID, user: DocenteUser, db: DbSession
+) -> AvaliacaoDetail:
+    return _svc(db).inativar(user, avaliacao_id)
+
+
+@router.delete("/apagar-avaliacao/{avaliacao_id}", status_code=status.HTTP_204_NO_CONTENT)
+def apagar_avaliacao(
+    avaliacao_id: uuid.UUID, user: DocenteUser, db: DbSession
+) -> Response:
+    _svc(db).apagar_avaliacao(user, avaliacao_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/duplicar-avaliacao/{avaliacao_id}", response_model=AvaliacaoDetail, status_code=201)
+def duplicar_avaliacao(
+    avaliacao_id: uuid.UUID,
+    user: DocenteUser,
+    db: DbSession,
+    body: AvaliacaoDuplicar | None = None,
+) -> AvaliacaoDetail:
+    return _svc(db).duplicar(user, avaliacao_id, body or AvaliacaoDuplicar())
+
+
+@router.post("/reabrir-avaliacao/{avaliacao_id}", response_model=AvaliacaoDetail)
+def reabrir_avaliacao(
+    avaliacao_id: uuid.UUID,
+    user: DocenteUser,
+    db: DbSession,
+    body: AvaliacaoReabrir | None = None,
+) -> AvaliacaoDetail:
+    return _svc(db).reabrir_avaliacao(user, avaliacao_id, body or AvaliacaoReabrir())
+
+
+@router.get(
+    "/consultar-submissoes-avaliacao/{avaliacao_id}",
+    response_model=SubmissoesAvaliacaoProfessor,
+)
+def consultar_submissoes_avaliacao(
+    avaliacao_id: uuid.UUID, user: DocenteUser, db: DbSession
+) -> SubmissoesAvaliacaoProfessor:
+    return _svc(db).listar_submissoes_avaliacao(user, avaliacao_id)
+
+
+@router.get(
+    "/consultar-submissao-avaliacao/{avaliacao_id}/{aluno_id}",
+    response_model=AlunoAvaliacaoView,
+)
+def consultar_submissao_avaliacao(
+    avaliacao_id: uuid.UUID,
+    aluno_id: uuid.UUID,
+    user: DocenteUser,
+    db: DbSession,
+) -> AlunoAvaliacaoView:
+    return _svc(db).professor_get_submissao_avaliacao(user, avaliacao_id, aluno_id)
+
+
+@router.post("/reabrir-submissao-aluno/{submissao_id}", response_model=SubmissaoResponse)
+def reabrir_submissao_aluno(
+    submissao_id: uuid.UUID, user: DocenteUser, db: DbSession
+) -> SubmissaoResponse:
+    return _svc(db).reabrir_submissao_aluno(user, submissao_id)
 
 
 @router.put("/substituir-questoes-avaliacao/{avaliacao_id}", response_model=AvaliacaoDetail)
@@ -239,3 +318,25 @@ def enviar_submissao(
     submissao_id: uuid.UUID, user: AlunoUser, db: DbSession
 ) -> SubmissaoResponse:
     return _svc(db).aluno_enviar_submissao(user, submissao_id)
+
+
+@router.get("/consultar-avaliacoes-dependente", response_model=list[AlunoAvaliacaoDisponivel])
+def consultar_avaliacoes_dependente(
+    user: ResponsavelUser,
+    db: DbSession,
+    aluno_id: uuid.UUID = Query(...),
+) -> list[AlunoAvaliacaoDisponivel]:
+    return _svc(db).responsavel_avaliacoes_dependente(user, aluno_id)
+
+
+@router.get(
+    "/consultar-avaliacao-dependente/{avaliacao_id}",
+    response_model=AlunoAvaliacaoView,
+)
+def consultar_avaliacao_dependente(
+    avaliacao_id: uuid.UUID,
+    user: ResponsavelUser,
+    db: DbSession,
+    aluno_id: uuid.UUID = Query(...),
+) -> AlunoAvaliacaoView:
+    return _svc(db).responsavel_get_avaliacao_dependente(user, avaliacao_id, aluno_id)

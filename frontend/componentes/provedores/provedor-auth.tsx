@@ -1,9 +1,11 @@
 "use client"
 
 import * as React from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { usePathname, useRouter } from "next/navigation"
 import type { UserMe } from "@/lib/api/dtos/auth"
 import { authRequests } from "@/lib/api/requests/configuracoes"
+import { STALE_TIME_MS } from "@/lib/cache/query-config"
 import {
   ROTA_HOME_POR_PERFIL,
   perfilEfetivo,
@@ -20,48 +22,40 @@ type AuthContextValue = {
 const AuthContext = React.createContext<AuthContextValue | null>(null)
 
 export function ProvedorAuth({ children }: { children: React.ReactNode }) {
-  const [usuario, setUsuario] = React.useState<UserMe | null>(null)
-  const [carregando, setCarregando] = React.useState(true)
   const pathname = usePathname()
   const router = useRouter()
+  const qc = useQueryClient()
 
-  const encerrarSessao = React.useCallback(async () => {
-    try {
-      await authRequests.logout()
-    } catch {
-      /* cookies limpos no servidor */
-    }
-    setUsuario(null)
-  }, [])
+  const {
+    data: usuario = null,
+    isLoading,
+    isFetching,
+    isFetched,
+    refetch,
+  } = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: () => authRequests.me(),
+    staleTime: STALE_TIME_MS,
+    retry: false,
+    enabled: pathname !== "/login",
+  })
+
+  const carregando =
+    pathname !== "/login" && !usuario && isLoading && !isFetched
 
   const recarregar = React.useCallback(async () => {
-    try {
-      const me = await authRequests.me()
-      setUsuario(me)
-      return true
-    } catch {
-      setUsuario(null)
-      return false
-    }
-  }, [])
+    const result = await refetch()
+    return result.isSuccess
+  }, [refetch])
 
   React.useEffect(() => {
-    if (pathname === "/login") {
-      setCarregando(false)
-      return
+    if (pathname === "/login" || isLoading || isFetching || !isFetched) return
+    if (!usuario) {
+      const login = new URL("/login", window.location.origin)
+      login.searchParams.set("next", pathname)
+      router.replace(login.pathname + login.search)
     }
-    setCarregando(true)
-    void (async () => {
-      const ok = await recarregar()
-      setCarregando(false)
-      if (!ok) {
-        await encerrarSessao()
-        const login = new URL("/login", window.location.origin)
-        login.searchParams.set("next", pathname)
-        router.replace(login.pathname + login.search)
-      }
-    })()
-  }, [pathname, recarregar, encerrarSessao, router])
+  }, [usuario, pathname, isLoading, isFetching, isFetched, router])
 
   React.useEffect(() => {
     if (!usuario || pathname === "/login" || carregando) return
@@ -73,9 +67,9 @@ export function ProvedorAuth({ children }: { children: React.ReactNode }) {
 
   const logout = React.useCallback(async () => {
     await authRequests.logout()
-    setUsuario(null)
+    qc.setQueryData(["auth", "me"], null)
     router.replace("/login")
-  }, [router])
+  }, [router, qc])
 
   return (
     <AuthContext.Provider value={{ usuario, carregando, recarregar, logout }}>
@@ -86,8 +80,18 @@ export function ProvedorAuth({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const ctx = React.useContext(AuthContext)
-  if (!ctx) throw new Error("useAuth deve estar dentro de ProvedorAuth")
+  if (!ctx) {
+    throw new Error("useAuth deve ser usado dentro de ProvedorAuth")
+  }
   return ctx
+}
+
+function useClienteHidratado() {
+  return React.useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  )
 }
 
 export function GuardAuth({
@@ -99,25 +103,21 @@ export function GuardAuth({
 }) {
   const { usuario, carregando } = useAuth()
   const pathname = usePathname()
+  const hidratado = useClienteHidratado()
 
   if (pathname === "/login") return <>{children}</>
-  if (carregando) {
+
+  if (!hidratado || carregando || !usuario) {
+    const mensagem =
+      hidratado && !carregando && !usuario ? "Redirecionando..." : "Carregando..."
     return (
       fallback ?? (
         <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-          Carregando...
+          {mensagem}
         </div>
       )
     )
   }
-  if (!usuario) {
-    return (
-      fallback ?? (
-        <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-          Redirecionando...
-        </div>
-      )
-    )
-  }
+
   return <>{children}</>
 }

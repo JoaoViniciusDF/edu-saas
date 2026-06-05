@@ -199,6 +199,7 @@ export interface DiretorioPlataformaItem {
   usuario_id?: string | null
   professor_id?: string | null
   aluno_id?: string | null
+  responsavel_id?: string | null
 }
 
 export interface DiretorioPlataformaResponse {
@@ -240,12 +241,134 @@ export interface ProfessorDetalheResponse {
   turmas_titulares: TurmaResumoItem[]
 }
 
+export type StatusConta = "ativa" | "suspensa" | "pendente_ativacao"
+
+export interface AlunoVinculoItem {
+  id: string
+  usuario_id: string
+  nome_exibicao: string
+  matricula_codigo?: string | null
+  turmas: TurmaResumoItem[]
+}
+
+export interface MatriculaDetalheItem {
+  id: string
+  turma_id: string
+  turma_nome: string
+  ano_letivo: string
+  data_inicio: string
+  situacao: SituacaoMatricula
+}
+
+export interface UsuarioDetalheResponse {
+  usuario_id: string
+  tipo_perfil: TipoPerfilUsuario
+  nome_exibicao: string
+  email: string
+  status_conta: StatusConta
+  instituicao?: InstituicaoResponse | null
+  aluno_id?: string | null
+  professor_id?: string | null
+  responsavel_id?: string | null
+  matricula_codigo?: string | null
+  data_nascimento?: string | null
+  nome_social?: string | null
+  turmas?: TurmaResumoItem[] | null
+  matriculas?: MatriculaDetalheItem[] | null
+  responsaveis?: ResponsavelVinculoItem[] | null
+  registro_funcional?: string | null
+  areas_especialidade?: string | null
+  turmas_titulares?: TurmaResumoItem[] | null
+  grau_parentesco?: string | null
+  telefone?: string | null
+  alunos_vinculados?: AlunoVinculoItem[] | null
+}
+
+export interface UsuarioSuperAdminPatch {
+  nome_exibicao?: string | null
+  email?: string | null
+  senha?: string | null
+  matricula_codigo?: string | null
+  data_nascimento?: string | null
+  nome_social?: string | null
+  registro_funcional?: string | null
+  areas_especialidade?: string | null
+  grau_parentesco?: string | null
+  telefone?: string | null
+}
+
+export interface AssociarUsuarioInstituicaoBody {
+  instituicao_id: string
+}
+
+export interface MatriculasLoteCreate {
+  instituicao_id: string
+  turma_id: string
+  aluno_ids: string[]
+  data_inicio: string
+}
+
+export interface VincularResponsavelAlunosLoteBody {
+  instituicao_id: string
+  responsavel_id: string
+  aluno_ids: string[]
+  responsavel_principal?: boolean
+}
+
+export interface DesvincularResponsavelAlunosLoteBody {
+  instituicao_id: string
+  responsavel_id: string
+  aluno_ids: string[]
+}
+
+export interface TurmaProfessorVinculoItem {
+  id: string
+  nome_exibicao: string
+  eh_titular: boolean
+}
+
+export interface AssociarProfessorTurmasLoteBody {
+  instituicao_id: string
+  professor_id: string
+  turma_ids: string[]
+  professor_titular_turma_id?: string | null
+}
+
+export interface AssociarProfessoresTurmaLoteBody {
+  instituicao_id: string
+  turma_id: string
+  professor_ids: string[]
+  professor_titular_id?: string | null
+}
+
+export interface DesassociarProfessorTurmasLoteBody {
+  instituicao_id: string
+  turma_ids: string[]
+  professor_id?: string | null
+}
+
+export interface LoteFalhaItem {
+  id: string
+  motivo: string
+}
+
+export interface LoteResultadoResponse {
+  sucesso: string[]
+  falhas: LoteFalhaItem[]
+}
+
 export const PERFIS_CRIACAO: { value: TipoPerfilUsuario; label: string }[] = [
+  { value: "super_admin", label: "Super Admin" },
   { value: "administrador", label: "Administrador" },
   { value: "professor", label: "Professor" },
   { value: "aluno", label: "Aluno" },
   { value: "responsavel", label: "Responsável" },
 ]
+
+/** Perfis criáveis no contexto de uma instituição (super-admin na página da instituição). */
+export const PERFIS_CRIACAO_INSTITUICAO = PERFIS_CRIACAO.filter(
+  (p) => p.value !== "super_admin"
+)
 
 export interface TurmaListItem {
   id: string
@@ -254,6 +377,7 @@ export interface TurmaListItem {
   turno?: string | null
   professor_titular_id?: string | null
   professor_titular_nome?: string | null
+  professores?: TurmaProfessorVinculoItem[]
   instituicao_id?: string | null
   instituicao_nome?: string | null
   contagem_alunos?: number | null

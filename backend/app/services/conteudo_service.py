@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser
 from app.core.exceptions import forbidden, not_found
 from app.models.conteudo import MaterialEstudo, PastaConteudo, UploadBlob
 from app.models.enums import SituacaoMatricula, TipoPerfil
-from app.models.governanca import Matricula, Professor, UsuarioConta
+from app.models.governanca import AlunoResponsavel, Matricula, Professor, UsuarioConta
 from app.schemas.conteudo import (
     MaterialCreate,
     MaterialPatch,
@@ -37,19 +37,67 @@ class ConteudoService:
             raise not_found()
         return p
 
-    def list_pastas(self, user: CurrentUser) -> list[PastaConteudoResponse]:
+    def _turmas_aluno(self, aluno_id: uuid.UUID) -> list[uuid.UUID]:
+        return list(
+            self.db.scalars(
+                select(Matricula.turma_id).where(
+                    Matricula.aluno_id == aluno_id,
+                    Matricula.situacao == SituacaoMatricula.ativa,
+                )
+            ).all()
+        )
+
+    def _pasta_acessivel_leitura(self, user: CurrentUser, pasta: PastaConteudo) -> None:
+        if user.perfil == TipoPerfil.aluno and user.aluno_id:
+            turmas = self._turmas_aluno(user.aluno_id)
+            if pasta.turma_id and pasta.turma_id not in turmas:
+                raise forbidden()
+        elif user.perfil == TipoPerfil.responsavel:
+            raise forbidden("Use aluno_id na consulta")
+
+    def list_pastas(
+        self,
+        user: CurrentUser,
+        turma_id: uuid.UUID | None = None,
+        aluno_id: uuid.UUID | None = None,
+    ) -> list[PastaConteudoResponse]:
         inst_id = self._inst_id(user)
         stmt = select(PastaConteudo).where(PastaConteudo.instituicao_id == inst_id)
-        if user.perfil == TipoPerfil.aluno and user.aluno_id:
-            turma_ids = select(Matricula.turma_id).where(
-                Matricula.aluno_id == user.aluno_id,
-                Matricula.situacao == SituacaoMatricula.ativa,
+        aluno_ref = user.aluno_id
+        if user.perfil == TipoPerfil.responsavel and aluno_id:
+            if not user.responsavel_id:
+                raise forbidden()
+            v = self.db.scalar(
+                select(AlunoResponsavel).where(
+                    AlunoResponsavel.responsavel_id == user.responsavel_id,
+                    AlunoResponsavel.aluno_id == aluno_id,
+                )
             )
+            if not v:
+                raise forbidden()
+            aluno_ref = aluno_id
+        if aluno_ref:
+            turmas = self._turmas_aluno(aluno_ref)
+            if not turmas:
+                return []
             stmt = stmt.where(
-                (PastaConteudo.turma_id.is_(None)) | (PastaConteudo.turma_id.in_(turma_ids))
+                (PastaConteudo.turma_id.is_(None)) | (PastaConteudo.turma_id.in_(turmas))
+            )
+        elif user.perfil == TipoPerfil.professor and turma_id:
+            stmt = stmt.where(
+                (PastaConteudo.turma_id.is_(None)) | (PastaConteudo.turma_id == turma_id)
             )
         rows = self.db.scalars(stmt.order_by(PastaConteudo.ordem.nulls_last())).all()
-        return [self._pasta_resp(p) for p in rows]
+        if not rows:
+            return []
+        pasta_ids = [p.id for p in rows]
+        count_rows = self.db.execute(
+            select(MaterialEstudo.pasta_conteudo_id, func.count())
+            .where(MaterialEstudo.pasta_conteudo_id.in_(pasta_ids))
+            .group_by(MaterialEstudo.pasta_conteudo_id)
+        ).all()
+        counts = {pid: int(cnt) for pid, cnt in count_rows}
+        return [self._pasta_resp(p, counts.get(p.id, 0)) for p in rows]
 
     def create_pasta(self, user: CurrentUser, body: PastaConteudoCreate) -> PastaConteudoResponse:
         inst_id = self._inst_id(user)
@@ -64,7 +112,7 @@ class ConteudoService:
         self.db.add(p)
         self.db.commit()
         self.db.refresh(p)
-        return self._pasta_resp(p)
+        return self._pasta_resp(p, 0)
 
     def patch_pasta(
         self, user: CurrentUser, pasta_id: uuid.UUID, body: PastaConteudoPatch
@@ -75,7 +123,12 @@ class ConteudoService:
             setattr(p, k, v)
         self.db.commit()
         self.db.refresh(p)
-        return self._pasta_resp(p)
+        cnt = self.db.scalar(
+            select(func.count())
+            .select_from(MaterialEstudo)
+            .where(MaterialEstudo.pasta_conteudo_id == p.id)
+        ) or 0
+        return self._pasta_resp(p, int(cnt))
 
     def delete_pasta(self, user: CurrentUser, pasta_id: uuid.UUID) -> None:
         inst_id = self._inst_id(user)
@@ -83,9 +136,32 @@ class ConteudoService:
         self.db.delete(p)
         self.db.commit()
 
-    def list_materiais(self, user: CurrentUser, pasta_id: uuid.UUID) -> list[MaterialResponse]:
+    def list_materiais(
+        self,
+        user: CurrentUser,
+        pasta_id: uuid.UUID,
+        aluno_id: uuid.UUID | None = None,
+    ) -> list[MaterialResponse]:
         inst_id = self._inst_id(user)
-        self._pasta_tenant(pasta_id, inst_id)
+        pasta = self._pasta_tenant(pasta_id, inst_id)
+        if user.perfil == TipoPerfil.responsavel and aluno_id:
+            if not user.responsavel_id:
+                raise forbidden()
+            v = self.db.scalar(
+                select(AlunoResponsavel).where(
+                    AlunoResponsavel.responsavel_id == user.responsavel_id,
+                    AlunoResponsavel.aluno_id == aluno_id,
+                )
+            )
+            if not v:
+                raise forbidden()
+            turmas = self._turmas_aluno(aluno_id)
+            if pasta.turma_id and pasta.turma_id not in turmas:
+                raise forbidden()
+        elif user.perfil == TipoPerfil.aluno and user.aluno_id:
+            turmas = self._turmas_aluno(user.aluno_id)
+            if pasta.turma_id and pasta.turma_id not in turmas:
+                raise forbidden()
         rows = self.db.scalars(
             select(MaterialEstudo)
             .where(MaterialEstudo.pasta_conteudo_id == pasta_id)
@@ -125,12 +201,32 @@ class ConteudoService:
         self.db.refresh(m)
         return self._material_resp(m)
 
-    def get_material(self, user: CurrentUser, material_id: uuid.UUID) -> MaterialResponse:
+    def get_material(
+        self, user: CurrentUser, material_id: uuid.UUID, aluno_id: uuid.UUID | None = None
+    ) -> MaterialResponse:
         inst_id = self._inst_id(user)
         m = self.db.get(MaterialEstudo, material_id)
         if not m:
             raise not_found()
-        self._pasta_tenant(m.pasta_conteudo_id, inst_id)
+        pasta = self._pasta_tenant(m.pasta_conteudo_id, inst_id)
+        if user.perfil == TipoPerfil.aluno and user.aluno_id:
+            turmas = self._turmas_aluno(user.aluno_id)
+            if pasta.turma_id and pasta.turma_id not in turmas:
+                raise forbidden()
+        if user.perfil == TipoPerfil.responsavel and aluno_id:
+            if not user.responsavel_id:
+                raise forbidden()
+            v = self.db.scalar(
+                select(AlunoResponsavel).where(
+                    AlunoResponsavel.responsavel_id == user.responsavel_id,
+                    AlunoResponsavel.aluno_id == aluno_id,
+                )
+            )
+            if not v:
+                raise forbidden()
+            turmas = self._turmas_aluno(aluno_id)
+            if pasta.turma_id and pasta.turma_id not in turmas:
+                raise forbidden()
         return self._material_resp(m)
 
     def patch_material(
@@ -178,7 +274,7 @@ class ConteudoService:
             storage_key=storage_key,
         )
 
-    def _pasta_resp(self, p: PastaConteudo) -> PastaConteudoResponse:
+    def _pasta_resp(self, p: PastaConteudo, quantidade_materiais: int = 0) -> PastaConteudoResponse:
         return PastaConteudoResponse(
             id=p.id,
             nome_disciplina=p.nome_disciplina,
@@ -186,6 +282,7 @@ class ConteudoService:
             cor_token_ui=p.cor_token_ui,
             icone=p.icone,
             ordem=p.ordem,
+            quantidade_materiais=quantidade_materiais,
         )
 
     def _material_resp(self, m: MaterialEstudo) -> MaterialResponse:

@@ -28,7 +28,7 @@ sequenceDiagram
 
 ### Passo 1 — Super Admin cria escola
 
-1. Acessa `/super-admin/instituicoes/nova`
+1. Na home `/super-admin`, abre o modal **Nova instituição**
 2. Informa `nome_fantasia`, `documento_legal` (opcional)
 3. Opcionalmente cria **primeiro administrador**: e-mail, senha temporária, nome
 4. `POST /configuracoes/criar-instituicao` persiste `instituicao` + `usuario_conta` (`tipo_perfil=administrador`)
@@ -55,19 +55,23 @@ Professores (ou administrador) usam Conteúdo, Avaliações, Comunicados e Dashb
 | Bloco | Dados |
 |-------|--------|
 | Cartões | Total instituições, professores, turmas, alunos (plataforma) |
-| Ação rápida | Nova instituição |
+| Diretório | Instituições e usuários com filtros |
+| Ações | Nova instituição, novo usuário (wizard) |
 
-API: `GET /configuracoes/consultar-resumo-plataforma`
+API: `GET /configuracoes/consultar-resumo-plataforma`, `GET /configuracoes/consultar-diretorio-plataforma`
 
-### `/super-admin/instituicoes`
+Clique em usuário → `/super-admin/usuario/[usuario_id]`.
 
-| Coluna | Ação |
-|--------|------|
-| Nome | Link para `/super-admin/instituicoes/[id]` |
-| Documento | — |
-| Professores / Turmas / Alunos | Contagens via resumo da instituição |
+### `/super-admin/usuario/[id]`
 
-Filtros: nome, status. Paginação cursor.
+| Bloco | Dados / ações |
+|-------|----------------|
+| Cabeçalho | Perfil, instituição, **Entrar como**, **Editar**, **Desativar** |
+| Conta | Nome, e-mail, senha (edição SA) |
+| Instituição | Select para `PUT /associar-usuario-instituicao/{id}` |
+| Por perfil | Aluno: turmas/matrículas/responsáveis; Professor: turmas titulares; Responsável: alunos vinculados; Administrador: link à escola |
+
+API: `GET /consultar-detalhe-usuario/{usuario_id}`; mutações SA listadas em [07-api-contrato-backend.md](./07-api-contrato-backend.md) §3.1.2.
 
 ### `/super-admin/instituicoes/[id]`
 
@@ -90,20 +94,7 @@ API: `GET /configuracoes/consultar-resumo-instituicao/{id}`
 
 Credenciais demo (senha `admin123`): ver comentário em `backend/scripts/seed.py`.
 
-### `/super-admin/professores`
-
-| Coluna | Notas |
-|--------|--------|
-| Nome | — |
-| E-mail | — |
-| Instituição | FK nome_fantasia |
-| Turmas titular | Contagem |
-
-Query: `?instituicao_id=` (opcional). API: `GET /configuracoes/consultar-professores`
-
-### `/super-admin/turmas`
-
-Mesma lógica com `GET /configuracoes/consultar-turmas?instituicao_id=`.
+Na visão **Turmas** do diretório na página da instituição, use **Gerenciar** para definir professor titular e matricular alunos em lote.
 
 **Restrição:** Super Admin **não** acessa editor de provas nem emite comunicados como professor **sem** assumir sessão de um usuário da escola.
 
@@ -135,7 +126,7 @@ API: `POST /configuracoes/criar-usuario` com `tipo_perfil=professor` cria `usuar
 ### Turmas (salas de aula / coortes)
 
 **Lista**
-- Nome, ano letivo, turno, professor titular, nº alunos
+- Nome, ano letivo, turno, professor titular, lista `professores[]` (N:N), nº alunos
 
 **Formulário turma**
 | Campo | Validação |
@@ -143,7 +134,20 @@ API: `POST /configuracoes/criar-usuario` com `tipo_perfil=professor` cria `usuar
 | nome | obrigatório |
 | ano_letivo | obrigatório |
 | turno | opcional |
-| professor_titular_id | opcional no MVP, recomendado |
+| professor_titular_id | opcional; mantém coluna legada + junction `turma_professor` |
+
+**Wizards (Configurações e SA instituição)** — etapas opcionais com toggle:
+- Aluno: matrícula em uma turma após vínculo com responsável
+- Professor: vínculo a uma ou mais turmas (titular por turma via checkbox)
+- Turma: matricular alunos e associar vários professores (um titular)
+
+**Verificação manual (turmas / wizards):**
+1. Criar aluno sem turma; criar aluno com turma existente.
+2. Criar turma sem alunos/professores; criar turma com N alunos e M professores (1 titular).
+3. Criar professor sem turmas; criar professor titular em 2 turmas e colaborador em outra.
+4. Na mesma turma, 2+ professores via `associar-professores-turma-lote`.
+5. Admin em Configurações: matrícula e lotes de professor sem 403.
+6. SA instituição: wizards aluno/professor com passos opcionais.
 
 **Detalhe turma** `/configuracoes/turmas/[id]`
 - Lista alunos matriculados (ativos)

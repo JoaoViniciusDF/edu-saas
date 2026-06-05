@@ -2,6 +2,7 @@ import { bffRequest } from "../client"
 import type {
   ComunicadoCreate,
   ComunicadoDetail,
+  ComunicadoLeiturasResponse,
   ComunicadoListItem,
   ComunicadoPatch,
 } from "../dtos/comunicados"
@@ -17,4 +18,10 @@ export const comunicadosRequests = {
     bffRequest<ComunicadoDetail>(`/comunicados/publicar-comunicado/${id}`, { method: "POST" }),
   marcarLido: (id: string) =>
     bffRequest<void>(`/comunicados/marcar-comunicado-lido/${id}`, { method: "POST" }),
+  marcarTodosLidos: () =>
+    bffRequest<void>("/comunicados/marcar-todos-comunicados-lidos", { method: "POST" }),
+  leituras: (id: string) =>
+    bffRequest<ComunicadoLeiturasResponse>(
+      `/comunicados/consultar-leituras-comunicado/${id}`
+    ),
 }

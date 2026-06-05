@@ -4,15 +4,15 @@ export interface AvaliacaoListaItem {
   id: string
   titulo: string
   status: StatusAvaliacao
-  alunosFeitos: number
-  alunosTotal: number
+  alunosFeitos?: number
+  alunosTotal?: number
 }
 
 export interface ConteudoAvaliacao {
   id: string
   nome: string
-  alunosResponderam: number
-  alunosTotal: number
+  alunosResponderam?: number
+  alunosTotal?: number
   avaliacoesConcluidas: number
   avaliacoesTotal: number
   statusResumo: string

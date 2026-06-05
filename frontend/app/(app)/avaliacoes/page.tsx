@@ -1,26 +1,35 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import { Plus } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { ModuloAvaliacoes } from "@/componentes/modulos/modulo-avaliacoes"
-import { useAvaliacoes } from "@/componentes/modulos/avaliacoes-provedor"
+import type { PendenteUi } from "@/componentes/modulos/modulo-avaliacoes"
+import { ProvedorAvaliacoes } from "@/componentes/modulos/avaliacoes-provedor"
+import { ModalCriarMateriaWizard } from "@/componentes/modulos/wizards/modal-avaliacao-wizard"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 
-export default function AvaliacoesPage() {
+const ModuloAvaliacoes = dynamic(
+  () =>
+    import("@/componentes/modulos/modulo-avaliacoes").then((m) => ({
+      default: m.ModuloAvaliacoes,
+    })),
+  {
+    loading: () => (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-40 rounded-2xl" />
+        ))}
+      </div>
+    ),
+  }
+)
+
+function AvaliacoesPageConteudo() {
   const router = useRouter()
-  const { adicionarMateria } = useAvaliacoes()
   const [dialogoAberto, setDialogoAberto] = React.useState(false)
-  const [nomeNovaMateria, setNomeNovaMateria] = React.useState("")
+  const [pendentes, setPendentes] = React.useState<PendenteUi[]>([])
 
   return (
     <div className="min-h-[calc(100vh-4rem)] p-4 sm:p-6 lg:min-h-[calc(100vh-5rem)] lg:p-8">
@@ -42,47 +51,23 @@ export default function AvaliacoesPage() {
         </Button>
       </div>
 
-      <Dialog
-        open={dialogoAberto}
-        onOpenChange={(aberto) => {
-          setDialogoAberto(aberto)
-          if (!aberto) setNomeNovaMateria("")
-        }}
-      >
-        <DialogContent className="rounded-2xl sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Nova matéria</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="nome-materia-raiz">Nome</Label>
-            <Input
-              id="nome-materia-raiz"
-              value={nomeNovaMateria}
-              onChange={(e) => setNomeNovaMateria(e.target.value)}
-              placeholder="Ex.: Química"
-              className="rounded-xl"
-            />
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" className="rounded-xl" onClick={() => setDialogoAberto(false)}>
-              Cancelar
-            </Button>
-            <Button
-              className="rounded-xl"
-              onClick={() => {
-                const id = adicionarMateria(nomeNovaMateria)
-                setNomeNovaMateria("")
-                setDialogoAberto(false)
-                router.push(`/avaliacoes/${id}`)
-              }}
-            >
-              Criar e abrir
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ModalCriarMateriaWizard
+        aberto={dialogoAberto}
+        onOpenChange={setDialogoAberto}
+        onPendente={(item) => setPendentes((p) => [...p, item])}
+        onPendenteRemover={(key) => setPendentes((p) => p.filter((x) => x.key !== key))}
+        onCriado={(id) => router.push(`/avaliacoes/${id}`)}
+      />
 
-      <ModuloAvaliacoes omitirCabecalhoRaiz />
+      <ModuloAvaliacoes omitirCabecalhoRaiz pendentes={pendentes} />
     </div>
+  )
+}
+
+export default function AvaliacoesPage() {
+  return (
+    <ProvedorAvaliacoes>
+      <AvaliacoesPageConteudo />
+    </ProvedorAvaliacoes>
   )
 }

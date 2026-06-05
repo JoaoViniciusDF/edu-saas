@@ -3,6 +3,8 @@
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { conteudoRequests } from "@/lib/api/requests/conteudo"
+import { queryKeys } from "@/lib/cache/query-keys"
+import { useTurmaAtiva } from "@/componentes/provedores/provedor-turma-ativa"
 import type { MaterialResponse, PastaConteudoResponse } from "@/lib/api/dtos/conteudo"
 import { 
   FileText, 
@@ -39,6 +41,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
+import { ModalCriarMaterialWizard } from "@/componentes/modulos/wizards/modal-material-wizard"
 
 // Tipos
 interface Pasta {
@@ -47,7 +50,6 @@ interface Pasta {
   cor: string
   icone: string
   quantidadeMateriais: number
-  ultimaAtualizacao: string
 }
 
 interface MaterialEstudo {
@@ -57,12 +59,9 @@ interface MaterialEstudo {
   disciplina: string
   corDisciplina: string
   tipoAnexo: "pdf" | "audio" | "imagem" | "video" | "nota"
-  dataHora: string
   duracao?: string
   conteudo?: string
   urlArquivo?: string
-  /** Nomes dos arquivos anexados à nota (apenas demonstração local) */
-  anexosNomes?: string[]
 }
 
 const CORES_PASTA = [
@@ -76,42 +75,40 @@ const CORES_PASTA = [
   "from-indigo-500 to-indigo-600",
 ] as const
 
-function pastaApiParaUi(p: PastaConteudoResponse, index: number, qtd: number): Pasta {
+function pastaApiParaUi(p: PastaConteudoResponse, index: number): Pasta {
   return {
     id: p.id,
     nome: p.nome_disciplina,
     cor: p.cor_token_ui?.startsWith("from-") ? p.cor_token_ui : CORES_PASTA[index % CORES_PASTA.length],
     icone: p.icone ?? "book",
-    quantidadeMateriais: qtd,
-    ultimaAtualizacao: "—",
+    quantidadeMateriais: p.quantidade_materiais ?? 0,
   }
 }
 
-function materialApiParaUi(m: MaterialResponse, pastaNome: string, pastaId: string): MaterialEstudo {
+function corBadgePorPasta(corPasta: string): string {
+  if (corPasta.includes("blue")) return "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30"
+  if (corPasta.includes("amber")) return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+  if (corPasta.includes("violet")) return "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30"
+  if (corPasta.includes("emerald")) return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+  if (corPasta.includes("rose")) return "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+  return "bg-secondary text-foreground border-border"
+}
+
+function materialApiParaUi(
+  m: MaterialResponse,
+  pastaNome: string,
+  corPasta: string
+): MaterialEstudo {
   return {
     id: m.id,
     titulo: m.titulo,
     descricao: m.descricao ?? "",
     disciplina: pastaNome,
-    corDisciplina:
-      corDisciplinaPorPastaId[pastaId] ??
-      "bg-secondary text-foreground border-border",
+    corDisciplina: corBadgePorPasta(corPasta),
     tipoAnexo: m.tipo_anexo,
-    dataHora: "—",
     conteudo: m.corpo_texto ?? undefined,
     urlArquivo: m.url_objeto ?? undefined,
   }
-}
-
-const corDisciplinaPorPastaId: Record<string, string> = {
-  matematica: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  historia: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  fisica: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30",
-  quimica: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  portugues: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-  biologia: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  geografia: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
-  ingles: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
 }
 
 const iconesTipoAnexo = {
@@ -143,10 +140,12 @@ function VisualizacaoPastas({
   pastasLista,
   materiaisPorPastaMap,
   aoSelecionarPasta,
+  somenteLeitura = false,
 }: {
   pastasLista: Pasta[]
   materiaisPorPastaMap: Record<string, MaterialEstudo[]>
   aoSelecionarPasta: (id: string) => void
+  somenteLeitura?: boolean
 }) {
   return (
     <div className="p-4 sm:p-6 lg:p-8">
@@ -163,10 +162,12 @@ function VisualizacaoPastas({
             Seus materiais organizados por disciplina
           </p>
         </div>
-        <Button className="rounded-xl gap-2 shadow-soft">
-          <Plus className="h-4 w-4" />
-          Nova Pasta
-        </Button>
+        {!somenteLeitura && (
+          <Button className="rounded-xl gap-2 shadow-soft">
+            <Plus className="h-4 w-4" />
+            Nova Pasta
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
@@ -189,22 +190,21 @@ function VisualizacaoPastas({
               {pasta.nome}
             </h3>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              {(materiaisPorPastaMap[pasta.id]?.length ?? pasta.quantidadeMateriais)} itens
-            </p>
-            <p className="text-xs text-muted-foreground/70 mt-0.5">
-              {pasta.ultimaAtualizacao}
+              {materiaisPorPastaMap[pasta.id]?.length ?? pasta.quantidadeMateriais} itens
             </p>
           </button>
         ))}
 
-        <button
-          className="flex min-h-[180px] flex-col items-center justify-center rounded-3xl border-2 border-dashed border-border p-4 transition-all duration-300 hover:border-primary/50 hover:bg-primary/5 sm:min-h-[200px] sm:p-6"
-        >
-          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-secondary flex items-center justify-center mb-3">
-            <Plus className="w-8 h-8 sm:w-10 sm:h-10 text-muted-foreground" />
-          </div>
-          <span className="text-sm text-muted-foreground font-medium">Criar Pasta</span>
-        </button>
+        {!somenteLeitura && (
+          <button
+            className="flex min-h-[180px] flex-col items-center justify-center rounded-3xl border-2 border-dashed border-border p-4 transition-all duration-300 hover:border-primary/50 hover:bg-primary/5 sm:min-h-[200px] sm:p-6"
+          >
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-secondary flex items-center justify-center mb-3">
+              <Plus className="w-8 h-8 sm:w-10 sm:h-10 text-muted-foreground" />
+            </div>
+            <span className="text-sm text-muted-foreground font-medium">Criar Pasta</span>
+          </button>
+        )}
       </div>
     </div>
   )
@@ -224,7 +224,7 @@ function VisualizacaoTimeline({
   materiais: MaterialEstudo[]
   aoVoltar: () => void
   aoAbrirMaterial: (material: MaterialEstudo) => void
-  aoAbrirCriarNota: () => void
+  aoAbrirCriarNota?: () => void
 }) {
   const pasta = pastasLista.find(p => p.id === pastaId)
   const [filtroAtivo, setFiltroAtivo] = React.useState("Todos")
@@ -275,10 +275,12 @@ function VisualizacaoTimeline({
               <ChevronLeft className="h-4 w-4" />
               Voltar
             </Button>
-            <Button className="w-full shrink-0 gap-2 rounded-xl shadow-soft sm:w-auto" onClick={aoAbrirCriarNota}>
-            <StickyNote className="h-4 w-4" />
-            Criar nota e anexar arquivos
-            </Button>
+            {aoAbrirCriarNota && (
+              <Button className="w-full shrink-0 gap-2 rounded-xl shadow-soft sm:w-auto" onClick={aoAbrirCriarNota}>
+                <StickyNote className="h-4 w-4" />
+                Criar nota e anexar arquivos
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -355,12 +357,7 @@ function VisualizacaoTimeline({
                             {material.descricao}
                           </p>
                           
-                          <div className="flex items-center justify-between mt-4 pt-4 border-t border-border/50">
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Clock className="h-3.5 w-3.5" />
-                              <span>{material.dataHora}</span>
-                            </div>
-                            
+                          <div className="flex items-center justify-end mt-4 pt-4 border-t border-border/50">
                             <div className="flex items-center gap-2">
                               {(material.tipoAnexo === "video" || material.tipoAnexo === "audio") && (
                                 <Button size="sm" variant="ghost" className="h-8 w-8 p-0 rounded-lg">
@@ -402,132 +399,7 @@ function VisualizacaoTimeline({
         </div>
       )}
 
-      {/* Load more */}
-      {materiaisFiltrados.length > 0 && (
-        <div className="mt-8 text-center">
-          <Button variant="outline" className="rounded-full px-8">
-            Carregar mais conteúdos
-          </Button>
-        </div>
-      )}
     </div>
-  )
-}
-
-function ModalCriarNota({
-  aberto,
-  aoFechar,
-  nomePasta,
-  pastaId,
-  aoConfirmar,
-}: {
-  aberto: boolean
-  aoFechar: () => void
-  nomePasta: string
-  pastaId: string
-  aoConfirmar: (dados: {
-    titulo: string
-    conteudo: string
-    nomesAnexos: string[]
-  }) => void
-}) {
-  const [titulo, setTitulo] = React.useState("")
-  const [conteudo, setConteudo] = React.useState("")
-  const [arquivos, setArquivos] = React.useState<File[]>([])
-
-  React.useEffect(() => {
-    if (!aberto) {
-      setTitulo("")
-      setConteudo("")
-      setArquivos([])
-    }
-  }, [aberto])
-
-  const aoSelecionarArquivos = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const lista = e.target.files ? Array.from(e.target.files) : []
-    setArquivos(lista)
-  }
-
-  const submeter = () => {
-    if (!titulo.trim()) return
-    aoConfirmar({
-      titulo: titulo.trim(),
-      conteudo: conteudo.trim(),
-      nomesAnexos: arquivos.map((f) => f.name),
-    })
-    aoFechar()
-  }
-
-  return (
-    <Dialog
-      open={aberto}
-      onOpenChange={(open) => {
-        if (!open) aoFechar()
-      }}
-    >
-      <DialogContent className="sm:max-w-lg rounded-3xl gap-4" showCloseButton>
-        <DialogHeader>
-          <DialogTitle className="text-xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
-            Nova nota na pasta
-          </DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            {nomePasta}
-            <span className="sr-only"> — id {pastaId}</span>
-          </p>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="nota-titulo">Título</Label>
-            <Input
-              id="nota-titulo"
-              value={titulo}
-              onChange={(e) => setTitulo(e.target.value)}
-              placeholder="Ex.: Resumo da aula"
-              className="rounded-xl h-11"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="nota-conteudo">Conteúdo da nota</Label>
-            <Textarea
-              id="nota-conteudo"
-              value={conteudo}
-              onChange={(e) => setConteudo(e.target.value)}
-              placeholder="Escreva sua nota para a timeline..."
-              className="rounded-xl min-h-[120px] resize-y"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="nota-anexos">Anexar arquivos</Label>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Input
-                id="nota-anexos"
-                type="file"
-                multiple
-                className="cursor-pointer rounded-xl"
-                onChange={aoSelecionarArquivos}
-              />
-            </div>
-            {arquivos.length > 0 && (
-              <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1 max-h-24 overflow-y-auto border border-border/50 rounded-xl p-3 bg-secondary/30">
-                {arquivos.map((f) => (
-                  <li key={f.name + f.size}>{f.name}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button type="button" variant="outline" className="rounded-xl" onClick={aoFechar}>
-            Cancelar
-          </Button>
-          <Button type="button" className="rounded-xl" onClick={submeter} disabled={!titulo.trim()}>
-            Adicionar à timeline
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
 
@@ -577,32 +449,49 @@ function ModalConteudo({
         <div className="flex-1 overflow-y-auto py-6">
           {/* Preview área */}
           <div className="mb-6">
-            {material.tipoAnexo === "video" && (
+            {material.tipoAnexo === "video" && material.urlArquivo && (
+              <video
+                src={material.urlArquivo}
+                controls
+                className="aspect-video w-full rounded-2xl bg-secondary"
+              />
+            )}
+            {material.tipoAnexo === "video" && !material.urlArquivo && (
+              <div className="aspect-video bg-secondary rounded-2xl flex items-center justify-center text-sm text-muted-foreground">
+                Vídeo indisponível
+              </div>
+            )}
+            {material.tipoAnexo === "audio" && material.urlArquivo && (
+              <audio src={material.urlArquivo} controls className="w-full rounded-2xl" />
+            )}
+            {material.tipoAnexo === "audio" && !material.urlArquivo && (
+              <div className="h-24 bg-secondary rounded-2xl flex items-center justify-center text-sm text-muted-foreground">
+                Áudio indisponível
+              </div>
+            )}
+            {material.tipoAnexo === "imagem" && material.urlArquivo && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={material.urlArquivo}
+                alt={material.titulo}
+                className="aspect-video w-full rounded-2xl object-contain bg-secondary"
+              />
+            )}
+            {material.tipoAnexo === "imagem" && !material.urlArquivo && (
               <div className="aspect-video bg-secondary rounded-2xl flex items-center justify-center">
-                <Button size="lg" className="rounded-full w-16 h-16 shadow-soft">
-                  <Play className="h-8 w-8 ml-1" />
-                </Button>
+                <Image className="w-16 h-16 text-muted-foreground/50" />
               </div>
             )}
-            {material.tipoAnexo === "audio" && (
-              <div className="h-32 bg-gradient-to-r from-violet-500/10 to-purple-500/10 rounded-2xl flex items-center justify-center gap-4 p-6">
-                <Button size="lg" className="rounded-full w-14 h-14 shadow-soft">
-                  <Play className="h-6 w-6 ml-0.5" />
-                </Button>
-                <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
-                  <div className="h-full w-1/3 bg-primary rounded-full" />
-                </div>
-                <span className="text-sm font-medium text-muted-foreground">{material.duracao}</span>
-              </div>
+            {material.tipoAnexo === "pdf" && material.urlArquivo && (
+              <iframe
+                src={material.urlArquivo}
+                title={material.titulo}
+                className="aspect-[3/4] max-h-[300px] w-full rounded-2xl border border-border bg-secondary"
+              />
             )}
-            {material.tipoAnexo === "imagem" && (
-              <div className="aspect-video bg-gradient-to-br from-emerald-500/10 to-green-500/10 rounded-2xl flex items-center justify-center">
-                <Image className="w-16 h-16 text-emerald-500/50" />
-              </div>
-            )}
-            {material.tipoAnexo === "pdf" && (
-              <div className="aspect-[3/4] max-h-[300px] bg-gradient-to-br from-red-500/10 to-orange-500/10 rounded-2xl flex items-center justify-center">
-                <FileText className="w-16 h-16 text-red-500/50" />
+            {material.tipoAnexo === "pdf" && !material.urlArquivo && (
+              <div className="aspect-[3/4] max-h-[300px] bg-secondary rounded-2xl flex items-center justify-center">
+                <FileText className="w-16 h-16 text-muted-foreground/50" />
               </div>
             )}
             {material.tipoAnexo === "nota" && (
@@ -611,20 +500,8 @@ function ModalConteudo({
                   <StickyNote className="h-10 w-10 text-amber-600" />
                   <div>
                     <p className="text-sm font-semibold text-foreground">Nota na timeline</p>
-                    <p className="text-xs text-muted-foreground">
-                      {material.anexosNomes?.length
-                        ? `${material.anexosNomes.length} arquivo(s) anexado(s)`
-                        : "Sem anexos"}
-                    </p>
                   </div>
                 </div>
-                {material.anexosNomes && material.anexosNomes.length > 0 && (
-                  <ul className="mt-4 text-sm text-muted-foreground list-disc pl-5 space-y-1">
-                    {material.anexosNomes.map((n) => (
-                      <li key={n}>{n}</li>
-                    ))}
-                  </ul>
-                )}
               </div>
             )}
           </div>
@@ -641,69 +518,81 @@ function ModalConteudo({
             {material.conteudo && (
               <div>
                 <h4 className="text-sm font-semibold text-foreground mb-2">Sobre o conteúdo</h4>
-                <p className="text-sm text-muted-foreground leading-relaxed">
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
                   {material.conteudo}
                 </p>
               </div>
             )}
-
-            <div className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-              <Clock className="h-3.5 w-3.5" />
-              <span>Adicionado em {material.dataHora}</span>
-            </div>
           </div>
         </div>
 
-        {/* Footer com ações */}
-        <div className="flex-shrink-0 pt-4 border-t border-border flex gap-3">
-          <Button variant="outline" className="flex-1 rounded-xl gap-2">
-            <Download className="h-4 w-4" />
-            Baixar
-          </Button>
-          <Button className="flex-1 rounded-xl gap-2">
-            <ExternalLink className="h-4 w-4" />
-            Abrir em nova aba
-          </Button>
-        </div>
+        {material.urlArquivo && (
+          <div className="flex-shrink-0 pt-4 border-t border-border flex gap-3">
+            <Button variant="outline" className="flex-1 rounded-xl gap-2" asChild>
+              <a href={material.urlArquivo} download target="_blank" rel="noopener noreferrer">
+                <Download className="h-4 w-4" />
+                Baixar
+              </a>
+            </Button>
+            <Button className="flex-1 rounded-xl gap-2" asChild>
+              <a href={material.urlArquivo} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="h-4 w-4" />
+                Abrir em nova aba
+              </a>
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
 }
 
-export function ModuloConteudo({ somenteLeitura = false }: { somenteLeitura?: boolean }) {
+export function ModuloConteudo({
+  somenteLeitura = false,
+  alunoId,
+}: {
+  somenteLeitura?: boolean
+  alunoId?: string | null
+}) {
   const [pastaAtiva, setPastaAtiva] = React.useState<string | null>(null)
   const [materialAberto, setMaterialAberto] = React.useState<MaterialEstudo | null>(null)
   const [modalAberto, setModalAberto] = React.useState(false)
-  const [materiaisPorPastaState, setMateriaisPorPastaState] = React.useState<
-    Record<string, MaterialEstudo[]>
-  >({})
   const [modalCriarNotaAberto, setModalCriarNotaAberto] = React.useState(false)
 
-  const { data: pastasApi = [], isLoading } = useQuery({
-    queryKey: ["conteudo", "pastas"],
-    queryFn: () => conteudoRequests.listPastas(),
+  const { turmaAtivaId } = useTurmaAtiva()
+  const turmaFiltro = somenteLeitura || alunoId ? null : turmaAtivaId
+
+  const { data: pastasApi = [], isLoading, isError, refetch } = useQuery({
+    queryKey: queryKeys.conteudo.pastas(turmaFiltro, alunoId),
+    queryFn: () => conteudoRequests.listPastas(turmaFiltro, alunoId),
   })
+
+  const { data: materiaisApi = [] } = useQuery({
+    queryKey: queryKeys.conteudo.materiais(pastaAtiva ?? "", alunoId),
+    queryFn: () => conteudoRequests.listMateriais(pastaAtiva!, alunoId),
+    enabled: !!pastaAtiva,
+  })
+
+  const materiaisPorPastaState = React.useMemo(() => {
+    if (!pastaAtiva) return {} as Record<string, MaterialEstudo[]>
+    const pasta = pastasApi.find((p) => p.id === pastaAtiva)
+    const cor = pasta
+      ? pasta.cor_token_ui?.startsWith("from-")
+        ? pasta.cor_token_ui
+        : CORES_PASTA[pastasApi.indexOf(pasta) % CORES_PASTA.length]
+      : CORES_PASTA[0]
+    return {
+      [pastaAtiva]: materiaisApi.map((m) =>
+        materialApiParaUi(m, pasta?.nome_disciplina ?? "Conteúdo", cor)
+      ),
+    }
+  }, [pastaAtiva, pastasApi, materiaisApi])
 
   const pastas: Pasta[] = React.useMemo(
     () =>
-      pastasApi.map((p, i) =>
-        pastaApiParaUi(p, i, materiaisPorPastaState[p.id]?.length ?? 0)
-      ),
+      pastasApi.map((p, i) => pastaApiParaUi(p, i)),
     [pastasApi, materiaisPorPastaState]
   )
-
-  React.useEffect(() => {
-    if (!pastaAtiva) return
-    conteudoRequests.listMateriais(pastaAtiva).then((lista) => {
-      const pasta = pastasApi.find((p) => p.id === pastaAtiva)
-      setMateriaisPorPastaState((prev) => ({
-        ...prev,
-        [pastaAtiva]: lista.map((m) =>
-          materialApiParaUi(m, pasta?.nome_disciplina ?? "Conteúdo", pastaAtiva)
-        ),
-      }))
-    })
-  }, [pastaAtiva, pastasApi])
 
   const abrirMaterial = (material: MaterialEstudo) => {
     setMaterialAberto(material)
@@ -715,40 +604,21 @@ export function ModuloConteudo({ somenteLeitura = false }: { somenteLeitura?: bo
     setTimeout(() => setMaterialAberto(null), 200)
   }
 
-  const confirmarNovaNota = async (dados: {
-    titulo: string
-    conteudo: string
-    nomesAnexos: string[]
-  }) => {
-    if (!pastaAtiva || somenteLeitura) return
-    const pasta = pastas.find((p) => p.id === pastaAtiva)
-    const agora = new Date()
-    const dataHora = agora.toLocaleString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-    await conteudoRequests.createMaterial(pastaAtiva, {
-      titulo: dados.titulo,
-      descricao: dados.conteudo.slice(0, 160),
-      tipo_anexo: "nota",
-      corpo_texto: dados.conteudo,
-    })
-    const lista = await conteudoRequests.listMateriais(pastaAtiva)
-    setMateriaisPorPastaState((prev) => ({
-      ...prev,
-      [pastaAtiva]: lista.map((m) =>
-        materialApiParaUi(m, pasta?.nome ?? "Conteúdo", pastaAtiva)
-      ),
-    }))
-  }
-
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">
         Carregando conteúdo...
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+        <p className="text-muted-foreground">Não foi possível carregar o conteúdo.</p>
+        <Button variant="outline" className="rounded-xl" onClick={() => void refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     )
   }
@@ -769,6 +639,7 @@ export function ModuloConteudo({ somenteLeitura = false }: { somenteLeitura?: bo
           pastasLista={pastas}
           materiaisPorPastaMap={materiaisPorPastaState}
           aoSelecionarPasta={setPastaAtiva}
+          somenteLeitura={somenteLeitura}
         />
       )}
 
@@ -779,12 +650,11 @@ export function ModuloConteudo({ somenteLeitura = false }: { somenteLeitura?: bo
       />
 
       {pastaAtiva && (
-        <ModalCriarNota
-          aberto={modalCriarNotaAberto}
-          aoFechar={() => setModalCriarNotaAberto(false)}
+        <ModalCriarMaterialWizard
           pastaId={pastaAtiva}
           nomePasta={pastas.find((p) => p.id === pastaAtiva)?.nome ?? ""}
-          aoConfirmar={confirmarNovaNota}
+          aberto={modalCriarNotaAberto}
+          onOpenChange={setModalCriarNotaAberto}
         />
       )}
     </>

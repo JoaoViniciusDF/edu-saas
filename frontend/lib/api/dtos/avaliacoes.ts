@@ -58,8 +58,16 @@ export interface AvaliacaoListItem {
   id: string
   titulo: string
   status: StatusAvaliacao
+  turma_id?: string | null
+  turma_nome?: string | null
   prazo_utc?: string | null
   publicado_em?: string | null
+  total_submissoes?: number | null
+  total_alunos_turma?: number | null
+}
+
+export interface AvaliacaoPublicar {
+  turma_id: string
 }
 
 export interface QuestaoResponse {
@@ -78,6 +86,8 @@ export interface AvaliacaoDetail {
   pasta_id: string
   titulo: string
   status: StatusAvaliacao
+  turma_id?: string | null
+  turma_nome?: string | null
   prazo_utc?: string | null
   publicado_em?: string | null
   encerrada_em?: string | null
@@ -126,6 +136,8 @@ export interface ArvorePasta {
   id: string
   nome: string
   avaliacoes: AvaliacaoListItem[]
+  total_submissoes?: number | null
+  resumo_status_texto?: string | null
 }
 
 export interface ArvoreAssunto {
@@ -141,11 +153,19 @@ export interface ArvoreMateria {
   assuntos: ArvoreAssunto[]
 }
 
+export type SituacaoAvaliacaoAluno = "pendente" | "em_andamento" | "concluida"
+
 export interface AlunoAvaliacaoDisponivel {
   id: string
   titulo: string
+  turma_id: string
+  turma_nome: string
   prazo_utc?: string | null
+  status_avaliacao: StatusAvaliacao
   status_submissao?: StatusSubmissao | null
+  situacao: SituacaoAvaliacaoAluno
+  nota_decimal?: string | number | null
+  percentual_acerto?: number | null
 }
 
 export interface QuestaoAlunoView {
@@ -155,6 +175,9 @@ export interface QuestaoAlunoView {
   enunciado: string
   conteudo?: Record<string, unknown> | null
   alternativas?: string[] | null
+  indice_resposta_aluno?: number | null
+  indice_gabarito?: number | null
+  acertou?: boolean | null
 }
 
 export interface AlunoAvaliacaoView {
@@ -163,6 +186,42 @@ export interface AlunoAvaliacaoView {
   prazo_utc?: string | null
   questoes: QuestaoAlunoView[]
   submissao_id?: string | null
+  status_submissao?: StatusSubmissao | null
+  situacao?: SituacaoAvaliacaoAluno | null
+  somente_leitura?: boolean
+  exibir_gabarito?: boolean
+  nota_decimal?: string | number | null
+  percentual_acerto?: number | null
+  total_questoes?: number
+  questoes_corretas?: number
+  respostas?: RespostaQuestaoInput[]
+}
+
+export interface AvaliacaoDuplicar {
+  pasta_id?: string | null
+  titulo?: string | null
+}
+
+export interface AvaliacaoReabrir {
+  prazo_utc?: string | null
+}
+
+export interface SubmissaoResumoProfessor {
+  submissao_id?: string | null
+  aluno_id: string
+  aluno_nome: string
+  situacao: SituacaoAvaliacaoAluno
+  status_submissao?: StatusSubmissao | null
+  nota_decimal?: string | number | null
+  percentual_acerto?: number | null
+  enviada_em?: string | null
+}
+
+export interface SubmissoesAvaliacaoProfessor {
+  total_alunos: number
+  total_concluidas: number
+  total_pendentes: number
+  alunos: SubmissaoResumoProfessor[]
 }
 
 export interface RespostaQuestaoInput {
@@ -180,5 +239,6 @@ export interface SubmissaoResponse {
   avaliacao_id: string
   status: StatusSubmissao
   nota_decimal?: string | number | null
+  percentual_acerto?: number | null
   enviada_em?: string | null
 }

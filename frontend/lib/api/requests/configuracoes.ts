@@ -2,18 +2,23 @@ import { bffRequest } from "../client"
 import type { LoginRequest, UserMe, UserPreferencesPatch } from "../dtos/auth"
 import type { PaginatedResponse } from "../dtos/common"
 import type {
-  AlunoDetalheResponse,
   AlunoListItem,
   AlunoPatch,
+  AssociarProfessoresTurmaLoteBody,
+  AssociarProfessorTurmasLoteBody,
+  AssociarUsuarioInstituicaoBody,
+  DesassociarProfessorTurmasLoteBody,
+  DesvincularResponsavelAlunosLoteBody,
   DiretorioPlataformaParams,
   DiretorioPlataformaResponse,
   InstituicaoCreate,
   InstituicaoPatch,
   InstituicaoResponse,
+  LoteResultadoResponse,
   MatriculaCreate,
   MatriculaPatch,
   MatriculaResponse,
-  ProfessorDetalheResponse,
+  MatriculasLoteCreate,
   ProfessorListItem,
   ProfessorPatch,
   ResponsavelListItem,
@@ -23,9 +28,13 @@ import type {
   InstituicaoResumoResponse,
   TurmaCreate,
   TurmaListItem,
+  TurmaResumoItem,
   TurmaPatch,
   UsuarioCreate,
   UsuarioCreateResponse,
+  UsuarioDetalheResponse,
+  UsuarioSuperAdminPatch,
+  VincularResponsavelAlunosLoteBody,
   VinculoResponsavelCreate,
 } from "../dtos/configuracoes"
 
@@ -58,10 +67,52 @@ export const configuracoesRequests = {
       `/configuracoes/consultar-diretorio-plataforma${qs ? `?${qs}` : ""}`
     )
   },
-  getDetalheAluno: (id: string) =>
-    bffRequest<AlunoDetalheResponse>(`/configuracoes/consultar-detalhe-aluno/${id}`),
-  getDetalheProfessor: (id: string) =>
-    bffRequest<ProfessorDetalheResponse>(`/configuracoes/consultar-detalhe-professor/${id}`),
+  getDetalheUsuario: (id: string) =>
+    bffRequest<UsuarioDetalheResponse>(`/configuracoes/consultar-detalhe-usuario/${id}`),
+  patchUsuarioSuperAdmin: (id: string, body: UsuarioSuperAdminPatch) =>
+    bffRequest<UsuarioDetalheResponse>(`/configuracoes/editar-usuario/${id}`, { method: "PUT", body }),
+  desativarUsuario: (id: string) =>
+    bffRequest<void>(`/configuracoes/desativar-usuario/${id}`, { method: "DELETE" }),
+  associarUsuarioInstituicao: (id: string, body: AssociarUsuarioInstituicaoBody) =>
+    bffRequest<UsuarioDetalheResponse>(`/configuracoes/associar-usuario-instituicao/${id}`, {
+      method: "PUT",
+      body,
+    }),
+  criarMatriculasLote: (body: MatriculasLoteCreate) =>
+    bffRequest<LoteResultadoResponse>("/configuracoes/criar-matriculas-lote", {
+      method: "POST",
+      body,
+    }),
+  vincularResponsavelAlunosLote: (body: VincularResponsavelAlunosLoteBody) =>
+    bffRequest<LoteResultadoResponse>("/configuracoes/vincular-responsavel-alunos-lote", {
+      method: "POST",
+      body,
+    }),
+  desvincularResponsavelAlunosLote: (body: DesvincularResponsavelAlunosLoteBody) =>
+    bffRequest<LoteResultadoResponse>("/configuracoes/desvincular-responsavel-alunos-lote", {
+      method: "DELETE",
+      body,
+    }),
+  associarProfessorTurmasLote: (body: AssociarProfessorTurmasLoteBody) =>
+    bffRequest<LoteResultadoResponse>("/configuracoes/associar-professor-turmas-lote", {
+      method: "PUT",
+      body,
+    }),
+  associarProfessoresTurmaLote: (body: AssociarProfessoresTurmaLoteBody) =>
+    bffRequest<LoteResultadoResponse>("/configuracoes/associar-professores-turma-lote", {
+      method: "POST",
+      body,
+    }),
+  desassociarProfessorTurmasLote: (body: DesassociarProfessorTurmasLoteBody) =>
+    bffRequest<LoteResultadoResponse>("/configuracoes/desassociar-professor-turmas-lote", {
+      method: "DELETE",
+      body,
+    }),
+  patchMatriculaSuperAdmin: (matId: string, instituicaoId: string, body: MatriculaPatch) =>
+    bffRequest<MatriculaResponse>(
+      `/configuracoes/editar-matricula-super-admin/${matId}?instituicao_id=${instituicaoId}`,
+      { method: "PUT", body }
+    ),
   getResumoInstituicao: (id: string) =>
     bffRequest<InstituicaoResumoResponse>(`/configuracoes/consultar-resumo-instituicao/${id}`),
   createUsuario: (body: UsuarioCreate) =>
@@ -85,8 +136,10 @@ export const configuracoesRequests = {
     bffRequest<AlunoListItem>(`/configuracoes/editar-aluno/${id}`, { method: "PUT", body }),
   deleteAluno: (id: string) =>
     bffRequest<void>(`/configuracoes/apagar-aluno/${id}`, { method: "DELETE" }),
-  listResponsaveis: () =>
-    bffRequest<ResponsavelListItem[]>("/configuracoes/consultar-responsaveis"),
+  listResponsaveis: (instituicao_id?: string) =>
+    bffRequest<ResponsavelListItem[]>("/configuracoes/consultar-responsaveis", {
+      searchParams: { instituicao_id },
+    }),
   getResponsavel: (id: string) =>
     bffRequest<ResponsavelListItem>(`/configuracoes/consultar-responsavel/${id}`),
   patchResponsavel: (id: string, body: ResponsavelPatch) =>
@@ -106,6 +159,10 @@ export const configuracoesRequests = {
     ),
   listTurmas: (params?: { nome?: string; instituicao_id?: string }) =>
     bffRequest<TurmaListItem[]>("/configuracoes/consultar-turmas", { searchParams: params }),
+  listTurmasResumo: (params?: { nome?: string; instituicao_id?: string }) =>
+    bffRequest<TurmaResumoItem[]>("/configuracoes/consultar-turmas-resumo", {
+      searchParams: params,
+    }),
   createTurma: (body: TurmaCreate) =>
     bffRequest<TurmaListItem>("/configuracoes/criar-turma", { method: "POST", body }),
   getTurma: (id: string) => bffRequest<TurmaListItem>(`/configuracoes/consultar-turma/${id}`),
@@ -212,7 +269,7 @@ export const cadastrosRequests = {
 
 /** @deprecated Use configuracoesRequests */
 export const leituraRequests = {
-  listTurmas: () => configuracoesRequests.listTurmas(),
+  listTurmas: () => configuracoesRequests.listTurmasResumo(),
   getInstituicao: (id: string) => configuracoesRequests.getInstituicao(id),
   patchInstituicao: configuracoesRequests.patchInstituicao,
 }

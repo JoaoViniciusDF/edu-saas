@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { useRouter, useSearchParams } from "next/navigation"
 import { GraduationCap, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -15,6 +16,7 @@ const IS_DEV = process.env.NODE_ENV === "development"
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const qc = useQueryClient()
   const [email, setEmail] = React.useState(IS_DEV ? "professor@demo.edusaas" : "")
   const [senha, setSenha] = React.useState(IS_DEV ? "Demo@2026" : "")
   const [erro, setErro] = React.useState<string | null>(null)
@@ -38,6 +40,7 @@ export default function LoginPage() {
         return
       }
       const usuario = data.usuario as UserMe
+      qc.setQueryData(["auth", "me"], usuario)
       const next = searchParams.get("next")
       const destino =
         next && !next.startsWith("/login")

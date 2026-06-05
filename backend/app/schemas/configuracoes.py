@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models.enums import SituacaoMatricula, TipoPerfil
+from app.models.enums import SituacaoMatricula, StatusConta, TipoPerfil
 
 
 class VisaoPlataforma(StrEnum):
@@ -177,6 +177,12 @@ class TurmaResumoItem(BaseModel):
     turno: str | None = None
 
 
+class TurmaProfessorVinculoItem(BaseModel):
+    id: UUID
+    nome_exibicao: str
+    eh_titular: bool = False
+
+
 class TurmaListItem(BaseModel):
     id: UUID
     nome: str
@@ -184,6 +190,7 @@ class TurmaListItem(BaseModel):
     turno: str | None = None
     professor_titular_id: UUID | None = None
     professor_titular_nome: str | None = None
+    professores: list[TurmaProfessorVinculoItem] = Field(default_factory=list)
     instituicao_id: UUID | None = None
     instituicao_nome: str | None = None
     contagem_alunos: int | None = None
@@ -210,6 +217,7 @@ class DiretorioPlataformaItem(BaseModel):
     usuario_id: UUID | None = None
     professor_id: UUID | None = None
     aluno_id: UUID | None = None
+    responsavel_id: UUID | None = None
 
 
 class DiretorioPlataformaResponse(BaseModel):
@@ -280,6 +288,114 @@ class ResponsavelVinculoItem(BaseModel):
     nome_exibicao: str
     grau_parentesco: str | None = None
     responsavel_principal: bool
+
+
+class AlunoVinculoItem(BaseModel):
+    id: UUID
+    usuario_id: UUID
+    nome_exibicao: str
+    matricula_codigo: str | None = None
+    turmas: list[TurmaResumoItem] = Field(default_factory=list)
+
+
+class MatriculaDetalheItem(BaseModel):
+    id: UUID
+    turma_id: UUID
+    turma_nome: str
+    ano_letivo: str
+    data_inicio: date
+    situacao: SituacaoMatricula
+
+
+class UsuarioDetalheResponse(BaseModel):
+    usuario_id: UUID
+    tipo_perfil: TipoPerfil
+    nome_exibicao: str
+    email: str
+    status_conta: StatusConta
+    instituicao: InstituicaoResponse | None = None
+    aluno_id: UUID | None = None
+    professor_id: UUID | None = None
+    responsavel_id: UUID | None = None
+    matricula_codigo: str | None = None
+    data_nascimento: date | None = None
+    nome_social: str | None = None
+    turmas: list[TurmaResumoItem] | None = None
+    matriculas: list[MatriculaDetalheItem] | None = None
+    responsaveis: list[ResponsavelVinculoItem] | None = None
+    registro_funcional: str | None = None
+    areas_especialidade: str | None = None
+    turmas_titulares: list[TurmaResumoItem] | None = None
+    grau_parentesco: str | None = None
+    telefone: str | None = None
+    alunos_vinculados: list[AlunoVinculoItem] | None = None
+
+
+class UsuarioSuperAdminPatch(BaseModel):
+    nome_exibicao: str | None = None
+    email: EmailStr | None = None
+    senha: str | None = Field(default=None, min_length=6)
+    matricula_codigo: str | None = None
+    data_nascimento: date | None = None
+    nome_social: str | None = None
+    registro_funcional: str | None = None
+    areas_especialidade: str | None = None
+    grau_parentesco: str | None = None
+    telefone: str | None = None
+
+
+class AssociarUsuarioInstituicaoBody(BaseModel):
+    instituicao_id: UUID
+
+
+class MatriculasLoteCreate(BaseModel):
+    instituicao_id: UUID
+    turma_id: UUID
+    aluno_ids: list[UUID] = Field(min_length=1)
+    data_inicio: date
+
+
+class VincularResponsavelAlunosLoteBody(BaseModel):
+    instituicao_id: UUID
+    responsavel_id: UUID
+    aluno_ids: list[UUID] = Field(min_length=1)
+    responsavel_principal: bool = False
+
+
+class DesvincularResponsavelAlunosLoteBody(BaseModel):
+    instituicao_id: UUID
+    responsavel_id: UUID
+    aluno_ids: list[UUID] = Field(min_length=1)
+
+
+class AssociarProfessorTurmasLoteBody(BaseModel):
+    instituicao_id: UUID
+    professor_id: UUID
+    turma_ids: list[UUID] = Field(min_length=1)
+    professor_titular_turma_id: UUID | None = None
+
+
+class AssociarProfessoresTurmaLoteBody(BaseModel):
+    instituicao_id: UUID
+    turma_id: UUID
+    professor_ids: list[UUID] = Field(min_length=1)
+    professor_titular_id: UUID | None = None
+
+
+class DesassociarProfessorTurmasLoteBody(BaseModel):
+    instituicao_id: UUID
+    turma_ids: list[UUID] = Field(min_length=1)
+    professor_id: UUID | None = None
+
+
+class LoteFalhaItem(BaseModel):
+    id: UUID
+    motivo: str
+
+
+class LoteResultadoResponse(BaseModel):
+    sucesso: list[UUID]
+    falhas: list[LoteFalhaItem]
 
 
 InstituicaoCreate.model_rebuild()

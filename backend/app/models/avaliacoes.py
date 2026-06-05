@@ -27,7 +27,7 @@ from app.models.enums import (
 )
 
 if TYPE_CHECKING:
-    from app.models.governanca import Aluno, Instituicao, Professor
+    from app.models.governanca import Aluno, Instituicao, Professor, Turma
 
 
 class MateriaCurricular(UUIDPrimaryKeyMixin, TimestampsMixin, Base):
@@ -91,6 +91,11 @@ class Avaliacao(UUIDPrimaryKeyMixin, TimestampsMixin, Base):
         ForeignKey("pasta_avaliacoes.id", ondelete="CASCADE"),
         nullable=False,
     )
+    turma_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("turma.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     titulo: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[StatusAvaliacao] = mapped_column(
         Enum(StatusAvaliacao, name="status_avaliacao", create_constraint=True),
@@ -108,6 +113,7 @@ class Avaliacao(UUIDPrimaryKeyMixin, TimestampsMixin, Base):
     versao: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     pasta: Mapped["PastaAvaliacoes"] = relationship(back_populates="avaliacoes")
+    turma: Mapped["Turma"] = relationship()
     questoes: Mapped[list["Questao"]] = relationship(
         back_populates="avaliacao", order_by="Questao.ordem"
     )

@@ -14,6 +14,19 @@ export interface ComunicadoListItem {
   preview_corpo?: string | null
 }
 
+export interface ComunicadoLeituraItem {
+  usuario_id: string
+  nome_exibicao: string
+  lido: boolean
+  lido_em?: string | null
+}
+
+export interface ComunicadoLeiturasResponse {
+  total_destinatarios: number
+  total_lidos: number
+  itens: ComunicadoLeituraItem[]
+}
+
 export interface ComunicadoDetail {
   id: string
   titulo: string
@@ -23,6 +36,8 @@ export interface ComunicadoDetail {
   imagens_urls: string[]
   destinatarios: DestinatarioRef[]
   lido: boolean
+  total_destinatarios?: number | null
+  total_lidos?: number | null
 }
 
 export interface ComunicadoCreate {

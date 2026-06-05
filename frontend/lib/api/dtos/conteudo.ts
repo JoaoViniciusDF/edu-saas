@@ -7,6 +7,7 @@ export interface PastaConteudoResponse {
   cor_token_ui?: string | null
   icone?: string | null
   ordem?: number | null
+  quantidade_materiais?: number
 }
 
 export interface PastaConteudoCreate {

@@ -10,7 +10,8 @@ export const ROTA_HOME_POR_PERFIL: Record<TipoPerfil, string> = {
 }
 
 const PREFIXOS_APP = ["/conteudo", "/avaliacoes", "/comunicados", "/dashboard"]
-const PREFIXOS_ALUNO = ["/aluno/"]
+const PREFIXOS_ALUNO = ["/aluno"]
+const PREFIXOS_RESPONSAVEL = ["/responsavel/"]
 const PREFIXOS_SUPER = ["/super-admin"]
 const PREFIXOS_CONFIG = ["/configuracoes"]
 
@@ -56,12 +57,12 @@ export function rotaPermitidaParaPerfil(pathname: string, perfil: TipoPerfil): b
   }
 
   if (perfil === "responsavel") {
-    return (
-      pathname === "/dashboard" ||
-      pathname.startsWith("/dashboard/") ||
-      pathname === "/comunicados" ||
-      pathname.startsWith("/comunicados/")
+    const dash =
+      pathname === "/dashboard" || pathname.startsWith("/dashboard/")
+    const resp = PREFIXOS_RESPONSAVEL.some(
+      (p) => pathname === p || pathname.startsWith(`${p}`)
     )
+    return dash || resp
   }
 
   return false

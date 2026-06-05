@@ -9,7 +9,7 @@ import {
 } from "@/componentes/super-admin/filtros-diretorio"
 import { VISAO_OPCOES_HOME } from "@/componentes/super-admin/utils"
 import { ModalCriarInstituicao } from "@/componentes/super-admin/modal-criar-instituicao"
-import { ModalCriarUsuarioWizard } from "@/componentes/super-admin/modal-criar-usuario-wizard"
+import { ModalCriarSuperAdminWizard } from "@/componentes/super-admin/modal-criar-super-admin-wizard"
 import { TabelaDiretorioPlataforma } from "@/componentes/super-admin/tabela-diretorio-plataforma"
 import { Button } from "@/components/ui/button"
 
@@ -50,7 +50,7 @@ export default function SuperAdminHomePage() {
               onClick={() => setModalUsuario(true)}
             >
               <UserPlus className="h-4 w-4" />
-              Novo usuário
+              Novo super admin
             </Button>
           </div>
         </div>
@@ -64,7 +64,7 @@ export default function SuperAdminHomePage() {
       </div>
 
       <ModalCriarInstituicao aberto={modalInst} onOpenChange={setModalInst} />
-      <ModalCriarUsuarioWizard aberto={modalUsuario} onOpenChange={setModalUsuario} />
+      <ModalCriarSuperAdminWizard aberto={modalUsuario} onOpenChange={setModalUsuario} />
     </div>
   )
 }

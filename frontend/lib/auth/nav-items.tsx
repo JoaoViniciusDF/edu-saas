@@ -101,7 +101,12 @@ export function navPorPerfil(perfil: TipoPerfil | undefined): ItemNav[] {
         { ...NAV_COMUNICADOS, href: "/aluno/comunicados" },
       ])
     case "responsavel":
-      return comIcones([NAV_DASHBOARD, NAV_COMUNICADOS])
+      return comIcones([
+        NAV_DASHBOARD,
+        { ...NAV_CONTEUDO, href: "/responsavel/conteudo" },
+        { ...NAV_AVALIACOES, nome: "Avaliações", href: "/responsavel/avaliacoes" },
+        { ...NAV_COMUNICADOS, href: "/responsavel/comunicados" },
+      ])
     default:
       return comIcones([NAV_DASHBOARD, NAV_CONTEUDO, NAV_AVALIACOES, NAV_COMUNICADOS])
   }

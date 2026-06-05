@@ -25,6 +25,7 @@ class StatusAvaliacao(str, enum.Enum):
     rascunho = "rascunho"
     publicada = "publicada"
     encerrada = "encerrada"
+    inativa = "inativa"
 
 
 class TipoQuestao(str, enum.Enum):
@@ -56,6 +57,7 @@ class TipoDestinatarioComunicado(str, enum.Enum):
     aluno = "aluno"
     turma = "turma"
     responsavel = "responsavel"
+    professor = "professor"
 
 
 class PapelChat(str, enum.Enum):

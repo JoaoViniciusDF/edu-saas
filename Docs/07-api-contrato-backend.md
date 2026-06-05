@@ -159,9 +159,25 @@ Arquivo: `backend/app/controllers/ConfiguracoesController.py`
 | PUT | `/configuracoes/editar-instituicao/{id}` | SA, Adm | Idem |
 | GET | `/configuracoes/consultar-resumo-plataforma` | SA | Totais: instituições, professores, turmas, alunos |
 | GET | `/configuracoes/consultar-resumo-instituicao/{id}` | SA | Contagens + lista de usuários da escola (para impersonação) |
+| GET | `/configuracoes/consultar-diretorio-plataforma` | SA | Diretório cross-tenant (`visao`, filtros, paginação) |
+| GET | `/configuracoes/consultar-detalhe-usuario/{usuario_id}` | SA | Ficha unificada por `usuario_id` (todos os perfis tenant) |
+| GET | `/configuracoes/consultar-detalhe-aluno/{aluno_id}` | SA | Legado: detalhe por entidade aluno |
+| GET | `/configuracoes/consultar-detalhe-professor/{prof_id}` | SA | Legado: detalhe por entidade professor |
+| PUT | `/configuracoes/editar-usuario/{usuario_id}` | SA | Edita conta + campos do perfil |
+| DELETE | `/configuracoes/desativar-usuario/{usuario_id}` | SA | Soft delete (`status_conta=suspensa`) |
+| PUT | `/configuracoes/associar-usuario-instituicao/{usuario_id}` | SA | Body `{ instituicao_id }` — transfere usuário de escola |
+| POST | `/configuracoes/criar-matriculas-lote` | SA, Adm | Body `{ instituicao_id?, turma_id, aluno_ids[], data_inicio }` — Adm omite `instituicao_id` (usa a do token) |
+| POST | `/configuracoes/vincular-responsavel-alunos-lote` | SA | Body `{ instituicao_id, responsavel_id, aluno_ids[], responsavel_principal? }` |
+| DELETE | `/configuracoes/desvincular-responsavel-alunos-lote` | SA | Body `{ instituicao_id, responsavel_id, aluno_ids[] }` |
+| PUT | `/configuracoes/associar-professor-turmas-lote` | SA, Adm | Body `{ instituicao_id, professor_id, turma_ids[], professor_titular_turma_id? }` — vínculo N:N; titular opcional em uma das turmas |
+| POST | `/configuracoes/associar-professores-turma-lote` | SA, Adm | Body `{ instituicao_id, turma_id, professor_ids[], professor_titular_id? }` — vários professores na mesma turma |
+| DELETE | `/configuracoes/desassociar-professor-turmas-lote` | SA, Adm | Body `{ instituicao_id, turma_ids[], professor_id? }` — sem `professor_id`, remove titular legado da turma |
+| PUT | `/configuracoes/editar-matricula-super-admin/{mat_id}` | SA | Query `instituicao_id` + body `MatriculaPatch` |
 | GET | `/configuracoes/consultar-minha-instituicao` | Adm, P, A, R | Instituição do token (`instituicao_id` obrigatório) |
 
 **InstituicaoCreate:** `{ nome_fantasia, documento_legal?, administrador_inicial?: { email, senha, nome_exibicao } }`
+
+**LoteResultado:** `{ sucesso: UUID[], falhas: { id, motivo }[] }`
 
 **Telas:** `/super-admin/*`, `/configuracoes`
 
@@ -211,10 +227,12 @@ Arquivo: `backend/app/controllers/ConfiguracoesController.py`
 | GET | `/configuracoes/consultar-turmas` | SA, Adm, P, A, R | Ver alçada abaixo |
 | POST | `/configuracoes/criar-turma` | Adm, P | Adm: instituição; P: cria turma com titular = si |
 | GET | `/configuracoes/consultar-turma/{id}` | SA, Adm, P, A, R | Detalhe + contagem alunos; escopo por perfil |
-| PUT | `/configuracoes/editar-turma/{id}` | Adm, P | Adm: qualquer turma da instituição; P: turmas titular |
+| PUT | `/configuracoes/editar-turma/{id}` | Adm, P | Adm: qualquer turma da instituição; P: turmas titular; `professor_titular_id` sincroniza junction `turma_professor` |
 | GET | `/configuracoes/consultar-alunos-turma/{turma_id}` | Adm, P, R | Adm: qualquer turma; P: se titular; R: se dependente matriculado |
 | POST | `/configuracoes/criar-matricula` | Adm, P | `{ aluno_id, turma_id, data_inicio }`; P: turma titular |
 | PUT | `/configuracoes/editar-matricula/{id}` | Adm, P | Encerrar: `{ situacao, data_fim }`; P: matrícula em turma titular |
+
+**TurmaListItem** inclui `professores: { id, nome_exibicao, eh_titular }[]` além de `professor_titular_*` (derivado do titular na junction). Tabela `turma_professor` (N:N) com no máximo um `eh_titular=true` por turma.
 
 ##### Alçada: GET `/configuracoes/consultar-turmas`
 
@@ -241,7 +259,8 @@ Arquivo: `backend/app/controllers/ConfiguracoesController.py`
 
 - E-mail único por `(instituicao_id, lower(email))`
 - Matrícula ativa única por aluno (409 se violar)
-- Criar professor não concede turmas — associar via `professor_titular_id` em turma
+- Criar professor não concede turmas — associar via lotes ou `professor_titular_id` em turma (sincroniza N:N)
+- Vários professores por turma: `POST /associar-professores-turma-lote`; professor em várias turmas: `PUT /associar-professor-turmas-lote`
 
 ---
 
@@ -270,7 +289,14 @@ Arquivo: `backend/app/controllers/AvaliacoesController.py`
 | PUT | `/avaliacoes/editar-avaliacao/{avaliacao_id}` | Adm, P | Metadados (título, prazo); só `rascunho` para campos críticos |
 | POST | `/avaliacoes/salvar-rascunho-avaliacao/{avaliacao_id}` | Adm, P | Auto-save idempotente |
 | POST | `/avaliacoes/publicar-avaliacao/{avaliacao_id}` | Adm, P | `rascunho` → `publicada` |
-| POST | `/avaliacoes/encerrar-avaliacao/{avaliacao_id}` | Adm, P | `publicada` → `encerrada` (irreversível) |
+| POST | `/avaliacoes/encerrar-avaliacao/{avaliacao_id}` | Adm, P | `publicada` → `encerrada` |
+| POST | `/avaliacoes/inativar-avaliacao/{avaliacao_id}` | Adm, P | `publicada`/`encerrada` → `inativa` (soft-delete) |
+| DELETE | `/avaliacoes/apagar-avaliacao/{avaliacao_id}` | Adm, P | Remove permanentemente (cascade) |
+| POST | `/avaliacoes/duplicar-avaliacao/{avaliacao_id}` | Adm, P | Clone em `rascunho` com questões |
+| POST | `/avaliacoes/reabrir-avaliacao/{avaliacao_id}` | Adm, P | `encerrada`/`inativa` → `publicada`; body opcional `{ prazo_utc }` |
+| GET | `/avaliacoes/consultar-submissoes-avaliacao/{avaliacao_id}` | Adm, P | Lista alunos da turma + situação |
+| GET | `/avaliacoes/consultar-submissao-avaliacao/{avaliacao_id}/{aluno_id}` | Adm, P | Respostas questão a questão (gabarito) |
+| POST | `/avaliacoes/reabrir-submissao-aluno/{submissao_id}` | Adm, P | Reseta submissão do aluno (exceção) |
 | PUT | `/avaliacoes/substituir-questoes-avaliacao/{avaliacao_id}` | Adm, P | Replace bulk; só `rascunho` |
 | POST | `/avaliacoes/criar-questao/{avaliacao_id}` | Adm, P | Adiciona questão |
 | PUT | `/avaliacoes/editar-questao/{avaliacao_id}/{questao_id}` | Adm, P | Só `rascunho` |
@@ -278,8 +304,9 @@ Arquivo: `backend/app/controllers/AvaliacoesController.py`
 | POST | `/avaliacoes/reordenar-questoes/{avaliacao_id}` | Adm, P | Body: `{ questao_ids: UUID[] }` |
 
 **RN publicar:** ≥1 questão válida; MCQ com ≥2 alternativas e gabarito válido.  
-**RN encerrar:** irreversível no MVP.  
-**Contadores pasta:** somente leitura, derivados de `submissao`.
+**RN encerrar:** fecha prova publicada; use `reabrir-avaliacao` para reativar.  
+**RN inativar:** oculta da lista do aluno/responsável; dados preservados.  
+**Contadores:** `total_submissoes` e `total_alunos_turma` por avaliação na árvore.
 
 #### 3.2.2 Fluxo aluno (mesmo controller, alçada `aluno`)
 
@@ -300,7 +327,14 @@ Arquivo: `backend/app/controllers/AvaliacoesController.py`
 
 **RN submissão:** UNIQUE `(avaliacao_id, aluno_id)`; validar `prazo_utc` em UTC; sem gabarito na view aluno.
 
-**Telas:** `/avaliacoes/*` (docente), `/aluno/provas/*` (aluno)
+#### 3.2.2.1 Fluxo responsável (mesmo controller, alçada `responsavel`)
+
+| Método | Path | Perfis | Escopo / descrição |
+|--------|------|--------|-------------------|
+| GET | `/avaliacoes/consultar-avaliacoes-dependente?aluno_id=` | R | Lista provas do dependente |
+| GET | `/avaliacoes/consultar-avaliacao-dependente/{id}?aluno_id=` | R | Gabarito paginado; responsável vê respostas corretas mesmo em provas pendentes |
+
+**Telas:** `/avaliacoes/*` (docente), `/aluno/provas/*` (aluno), `/responsavel/avaliacoes/*` (responsável)
 
 #### 3.2.3 IA — fase futura (não implementada)
 
@@ -325,6 +359,8 @@ Arquivo: `backend/app/controllers/ComunicadosController.py`
 | PUT | `/comunicados/editar-comunicado/{id}` | Adm, P | Autor ou Adm; só status `rascunho` |
 | POST | `/comunicados/publicar-comunicado/{id}` | Adm, P | Autor ou Adm |
 | POST | `/comunicados/marcar-comunicado-lido/{id}` | Adm, P, A, R | Destinatário no escopo |
+| POST | `/comunicados/marcar-todos-comunicados-lidos` | Adm, P, A, R | Marca todos do inbox do usuário |
+| GET | `/comunicados/consultar-leituras-comunicado/{id}` | Adm, P | Lista destinatários efetivos e status de leitura |
 
 ##### Alçada: GET `/comunicados/consultar-comunicados`
 
@@ -335,7 +371,7 @@ Arquivo: `backend/app/controllers/ComunicadosController.py`
 | aluno | Sim | Comunicados publicados em que é destinatário efetivo |
 | responsavel | Sim | Comunicados publicados para si ou dependentes |
 
-**DestinatarioRef:** `{ tipo: aluno|turma|responsavel, id }` — expandir turma na publicação.
+**DestinatarioRef:** `{ tipo: aluno|turma|responsavel|professor, id }` — expandir turma na publicação; `professor` resolve para `usuario_id` do docente.
 
 **Telas:** `/comunicados`, `/aluno/comunicados`
 
@@ -378,6 +414,7 @@ Arquivo: `backend/app/controllers/DashboardController.py`
 |--------|------|--------|-------------------|
 | GET | `/dashboard/consultar-resumo` | SA, Adm, P, R | Ver alçada abaixo |
 | GET | `/dashboard/consultar-series` | SA, Adm, P, R | Séries temporais; mesmo escopo do resumo |
+| GET | `/dashboard/consultar-desempenho-avaliacoes` | SA, Adm, P, R | Árvore matéria → assunto → avaliações com % (submissões reais) |
 | GET | `/dashboard/buscar` | Adm, P, A, R | Busca federada; escopo por perfil |
 | GET | `/dashboard/consultar-notificacoes` | autenticado | Inbox do próprio usuário |
 | PUT | `/dashboard/marcar-notificacao-lida/{id}` | autenticado | Notificação própria |

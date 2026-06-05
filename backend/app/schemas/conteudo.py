@@ -12,6 +12,7 @@ class PastaConteudoResponse(BaseModel):
     cor_token_ui: str | None = None
     icone: str | None = None
     ordem: int | None = None
+    quantidade_materiais: int = 0
 
 
 class PastaConteudoCreate(BaseModel):

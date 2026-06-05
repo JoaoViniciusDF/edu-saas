@@ -1,7 +1,7 @@
 """
 Seed idempotente — delega ao bootstrap demo (@edu.com.br / admin123).
 
-Executado no startup do container Docker após `alembic upgrade head`.
+Opcional após `alembic upgrade head` (dados demo já vêm da migration `002`).
 
 Credenciais demo (senha: admin123):
   admin@edu.com.br       — super_admin (painel /super-admin)

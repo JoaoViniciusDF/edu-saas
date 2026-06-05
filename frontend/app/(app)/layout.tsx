@@ -3,11 +3,15 @@
 import type { ReactNode } from "react"
 import { BarraLateral } from "@/componentes/layout/barra-lateral"
 import { Cabecalho } from "@/componentes/layout/cabecalho"
+import { ProvedorTurmaAtiva } from "@/componentes/provedores/provedor-turma-ativa"
+import { ProvedorFilhoAtivo } from "@/componentes/provedores/provedor-filho-ativo"
 
 export default function AppLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   return (
+    <ProvedorTurmaAtiva>
+    <ProvedorFilhoAtivo>
     <div className="flex h-screen overflow-hidden bg-background">
       <div className="relative z-40 shrink-0">
         <BarraLateral />
@@ -21,5 +25,7 @@ export default function AppLayout({
         <main className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-16 lg:pt-0">{children}</main>
       </div>
     </div>
+    </ProvedorFilhoAtivo>
+    </ProvedorTurmaAtiva>
   )
 }

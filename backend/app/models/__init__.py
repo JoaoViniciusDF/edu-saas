@@ -27,6 +27,7 @@ from app.models.governanca import (
     Professor,
     Responsavel,
     Turma,
+    TurmaProfessor,
     UsuarioConta,
 )
 
@@ -38,6 +39,7 @@ __all__ = [
     "Responsavel",
     "AlunoResponsavel",
     "Turma",
+    "TurmaProfessor",
     "Matricula",
     "MateriaCurricular",
     "Assunto",

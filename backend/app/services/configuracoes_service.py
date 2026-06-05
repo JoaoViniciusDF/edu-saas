@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser
 from app.core.config import get_settings
-from app.core.exceptions import bad_request, conflict, forbidden, not_found, unauthorized
+from app.core.exceptions import AppError, bad_request, conflict, forbidden, not_found, unauthorized
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -24,6 +24,7 @@ from app.models.governanca import (
     Professor,
     Responsavel,
     Turma,
+    TurmaProfessor,
     UsuarioConta,
 )
 from app.schemas.auth import (
@@ -62,9 +63,23 @@ from app.schemas.configuracoes import (
     TurmaListItem,
     TurmaPatch,
     TurmaResumoItem,
+    AlunoVinculoItem,
+    AssociarProfessoresTurmaLoteBody,
+    AssociarProfessorTurmasLoteBody,
+    AssociarUsuarioInstituicaoBody,
+    DesassociarProfessorTurmasLoteBody,
+    TurmaProfessorVinculoItem,
+    DesvincularResponsavelAlunosLoteBody,
+    LoteFalhaItem,
+    LoteResultadoResponse,
+    MatriculaDetalheItem,
+    MatriculasLoteCreate,
     UsuarioCreate,
     UsuarioCreateResponse,
+    UsuarioDetalheResponse,
     UsuarioInstituicaoItem,
+    UsuarioSuperAdminPatch,
+    VincularResponsavelAlunosLoteBody,
     VinculoResponsavelCreate,
     VisaoPlataforma,
 )
@@ -508,6 +523,8 @@ class ConfiguracoesService:
         inst_id = body.instituicao_id
 
         if body.tipo_perfil == TipoPerfil.super_admin:
+            if actor is not None and actor.perfil != TipoPerfil.super_admin:
+                raise forbidden("Apenas super admin pode criar outro super admin")
             if inst_id is not None:
                 raise bad_request("super_admin não deve informar instituicao_id")
             inst_id = None
@@ -874,6 +891,13 @@ class ConfiguracoesService:
             professor_titular_id=body.professor_titular_id,
         )
         self.db.add(turma)
+        self.db.flush()
+        if body.professor_titular_id:
+            self._vincular_professor_turma(
+                turma,
+                body.professor_titular_id,
+                eh_titular=True,
+            )
         self.db.commit()
         self.db.refresh(turma)
         return self._turma_item(turma)
@@ -888,8 +912,16 @@ class ConfiguracoesService:
         turma = self.db.get(Turma, turma_id)
         if not turma or turma.instituicao_id != inst_id:
             raise not_found()
-        for k, v in body.model_dump(exclude_unset=True).items():
+        data = body.model_dump(exclude_unset=True)
+        titular_set = "professor_titular_id" in data
+        titular_id = data.pop("professor_titular_id", None)
+        for k, v in data.items():
             setattr(turma, k, v)
+        if titular_set:
+            if titular_id:
+                self._vincular_professor_turma(turma, titular_id, eh_titular=True)
+            else:
+                self._limpar_titular_turma(turma)
         self.db.commit()
         self.db.refresh(turma)
         return self._turma_item(turma)
@@ -953,8 +985,15 @@ class ConfiguracoesService:
         turma = self.db.get(Turma, turma_id)
         if not turma or turma.instituicao_id != user.instituicao_id:
             raise not_found()
-        if user.perfil == TipoPerfil.professor and turma.professor_titular_id != user.professor_id:
-            raise forbidden("Turma fora do seu escopo")
+        if user.perfil == TipoPerfil.professor and user.professor_id:
+            vinculado = self.db.scalar(
+                select(TurmaProfessor).where(
+                    TurmaProfessor.turma_id == turma_id,
+                    TurmaProfessor.professor_id == user.professor_id,
+                )
+            )
+            if not vinculado and turma.professor_titular_id != user.professor_id:
+                raise forbidden("Turma fora do seu escopo")
         return turma
 
     def _aluno_acessivel(self, user: CurrentUser, aluno_id: uuid.UUID) -> Aluno:
@@ -966,10 +1005,16 @@ class ConfiguracoesService:
             vinculo = self.db.scalar(
                 select(Matricula.id)
                 .join(Turma, Matricula.turma_id == Turma.id)
+                .outerjoin(
+                    TurmaProfessor,
+                    (TurmaProfessor.turma_id == Turma.id)
+                    & (TurmaProfessor.professor_id == user.professor_id),
+                )
                 .where(
                     Matricula.aluno_id == aluno_id,
                     Matricula.situacao == SituacaoMatricula.ativa,
-                    Turma.professor_titular_id == user.professor_id,
+                    (TurmaProfessor.id.isnot(None))
+                    | (Turma.professor_titular_id == user.professor_id),
                 )
             )
             if not vinculo:
@@ -1025,9 +1070,15 @@ class ConfiguracoesService:
             .join(UsuarioConta, Aluno.usuario_id == UsuarioConta.id)
             .join(Matricula, Matricula.aluno_id == Aluno.id)
             .join(Turma, Matricula.turma_id == Turma.id)
+            .outerjoin(
+                TurmaProfessor,
+                (TurmaProfessor.turma_id == Turma.id)
+                & (TurmaProfessor.professor_id == user.professor_id),
+            )
             .where(
-                Turma.professor_titular_id == user.professor_id,
                 Matricula.situacao == SituacaoMatricula.ativa,
+                (TurmaProfessor.id.isnot(None))
+                | (Turma.professor_titular_id == user.professor_id),
             )
             .distinct()
         ).all()
@@ -1130,6 +1181,76 @@ class ConfiguracoesService:
             raise not_found()
         return self.get_instituicao(inst_id)
 
+    def _vincular_professor_turma(
+        self, turma: Turma, professor_id: uuid.UUID, *, eh_titular: bool = False
+    ) -> TurmaProfessor:
+        prof = self.db.get(Professor, professor_id)
+        if not prof or not prof.usuario or prof.usuario.instituicao_id != turma.instituicao_id:
+            raise not_found("Professor não encontrado na instituição")
+        vinc = self.db.scalar(
+            select(TurmaProfessor).where(
+                TurmaProfessor.turma_id == turma.id,
+                TurmaProfessor.professor_id == professor_id,
+            )
+        )
+        if not vinc:
+            vinc = TurmaProfessor(
+                turma_id=turma.id,
+                professor_id=professor_id,
+                eh_titular=False,
+            )
+            self.db.add(vinc)
+        if eh_titular:
+            self._definir_titular_turma(turma, professor_id)
+        return vinc
+
+    def _definir_titular_turma(self, turma: Turma, professor_id: uuid.UUID) -> None:
+        for v in self.db.scalars(
+            select(TurmaProfessor).where(TurmaProfessor.turma_id == turma.id)
+        ).all():
+            v.eh_titular = v.professor_id == professor_id
+        vinc = self.db.scalar(
+            select(TurmaProfessor).where(
+                TurmaProfessor.turma_id == turma.id,
+                TurmaProfessor.professor_id == professor_id,
+            )
+        )
+        if not vinc:
+            self.db.add(
+                TurmaProfessor(
+                    turma_id=turma.id,
+                    professor_id=professor_id,
+                    eh_titular=True,
+                )
+            )
+        else:
+            vinc.eh_titular = True
+        turma.professor_titular_id = professor_id
+
+    def _limpar_titular_turma(self, turma: Turma) -> None:
+        for v in self.db.scalars(
+            select(TurmaProfessor).where(TurmaProfessor.turma_id == turma.id)
+        ).all():
+            v.eh_titular = False
+        turma.professor_titular_id = None
+
+    def _professores_vinculo_items(self, turma_id: uuid.UUID) -> list[TurmaProfessorVinculoItem]:
+        rows = self.db.scalars(
+            select(TurmaProfessor).where(TurmaProfessor.turma_id == turma_id)
+        ).all()
+        items: list[TurmaProfessorVinculoItem] = []
+        for v in rows:
+            prof = self.db.get(Professor, v.professor_id)
+            if prof and prof.usuario:
+                items.append(
+                    TurmaProfessorVinculoItem(
+                        id=prof.id,
+                        nome_exibicao=prof.usuario.nome_exibicao,
+                        eh_titular=v.eh_titular,
+                    )
+                )
+        return items
+
     def _turma_item(self, turma: Turma) -> TurmaListItem:
         count = self.db.scalar(
             select(func.count())
@@ -1153,6 +1274,7 @@ class ConfiguracoesService:
             turno=turma.turno,
             professor_titular_id=turma.professor_titular_id,
             professor_titular_nome=prof_nome,
+            professores=self._professores_vinculo_items(turma.id),
             instituicao_id=turma.instituicao_id,
             instituicao_nome=inst_nome,
             contagem_alunos=count or 0,
@@ -1400,6 +1522,7 @@ class ConfiguracoesService:
                         usuario_id=u.id,
                         professor_id=prof_id,
                         aluno_id=aluno_id,
+                        responsavel_id=resp_id,
                     )
                 )
 
@@ -1507,14 +1630,36 @@ class ConfiguracoesService:
             turmas_titulares=[self._turma_resumo(t) for t in turmas],
         )
 
-    def _turmas_list(
+    def _turmas_entities(
         self, inst_id: uuid.UUID | None, user: CurrentUser | None
-    ) -> list[TurmaListItem]:
+    ) -> list[Turma]:
         stmt = select(Turma)
         if inst_id:
             stmt = stmt.where(Turma.instituicao_id == inst_id)
+            if user and user.perfil == TipoPerfil.professor and user.professor_id:
+                stmt = (
+                    stmt.outerjoin(
+                        TurmaProfessor,
+                        (TurmaProfessor.turma_id == Turma.id)
+                        & (TurmaProfessor.professor_id == user.professor_id),
+                    )
+                    .where(
+                        (TurmaProfessor.id.isnot(None))
+                        | (Turma.professor_titular_id == user.professor_id)
+                    )
+                )
         elif user and user.perfil == TipoPerfil.professor and user.professor_id:
-            stmt = stmt.where(Turma.professor_titular_id == user.professor_id)
+            stmt = (
+                stmt.outerjoin(
+                    TurmaProfessor,
+                    (TurmaProfessor.turma_id == Turma.id)
+                    & (TurmaProfessor.professor_id == user.professor_id),
+                )
+                .where(
+                    (TurmaProfessor.id.isnot(None))
+                    | (Turma.professor_titular_id == user.professor_id)
+                )
+            )
         elif user and user.perfil == TipoPerfil.aluno and user.aluno_id:
             stmt = stmt.join(Matricula, Matricula.turma_id == Turma.id).where(
                 Matricula.aluno_id == user.aluno_id,
@@ -1528,8 +1673,12 @@ class ConfiguracoesService:
                 Matricula.aluno_id.in_(aluno_ids),
                 Matricula.situacao == SituacaoMatricula.ativa,
             )
-        turmas = self.db.scalars(stmt).unique().all()
-        return [self._turma_item(t) for t in turmas]
+        return list(self.db.scalars(stmt).unique().all())
+
+    def _turmas_list(
+        self, inst_id: uuid.UUID | None, user: CurrentUser | None
+    ) -> list[TurmaListItem]:
+        return [self._turma_item(t) for t in self._turmas_entities(inst_id, user)]
 
     def list_turmas(
         self,
@@ -1545,14 +1694,40 @@ class ConfiguracoesService:
             items = [t for t in items if nome.lower() in t.nome.lower()]
         return items
 
+    def list_turmas_resumo(
+        self,
+        user: CurrentUser,
+        nome: str | None = None,
+        instituicao_id: uuid.UUID | None = None,
+    ) -> list[TurmaResumoItem]:
+        inst_id = instituicao_id if user.perfil == TipoPerfil.super_admin else user.instituicao_id
+        if not inst_id and user.perfil != TipoPerfil.super_admin:
+            raise forbidden()
+        items = [self._turma_resumo(t) for t in self._turmas_entities(inst_id, user)]
+        if nome:
+            items = [t for t in items if nome.lower() in t.nome.lower()]
+        return items
+
     def get_turma(self, user: CurrentUser, turma_id: uuid.UUID) -> TurmaListItem:
         turma = self.db.get(Turma, turma_id)
         if not turma:
             raise not_found()
         if user.perfil != TipoPerfil.super_admin and turma.instituicao_id != user.instituicao_id:
             raise not_found()
-        if user.perfil == TipoPerfil.professor and turma.professor_titular_id != user.professor_id:
-            raise not_found()
+        if user.perfil == TipoPerfil.professor and user.professor_id:
+            self._turma_acessivel(user, turma_id)
+        elif user.perfil == TipoPerfil.responsavel and user.responsavel_id:
+            v = self.db.scalar(
+                select(Matricula.id)
+                .join(AlunoResponsavel, AlunoResponsavel.aluno_id == Matricula.aluno_id)
+                .where(
+                    Matricula.turma_id == turma_id,
+                    Matricula.situacao == SituacaoMatricula.ativa,
+                    AlunoResponsavel.responsavel_id == user.responsavel_id,
+                )
+            )
+            if not v:
+                raise not_found()
         return self._turma_item(turma)
 
     def get_minha_instituicao(self, user: CurrentUser) -> InstituicaoResponse:
@@ -1631,3 +1806,412 @@ class ConfiguracoesService:
             )
             for ar, r, u in rows
         ]
+
+    def _instituicao_response(self, inst_id: uuid.UUID | None) -> InstituicaoResponse | None:
+        if not inst_id:
+            return None
+        inst = self.db.get(Instituicao, inst_id)
+        if not inst:
+            return None
+        return InstituicaoResponse(
+            id=inst.id,
+            nome_fantasia=inst.nome_fantasia,
+            documento_legal=inst.documento_legal,
+            configuracoes=inst.configuracoes_jsonb,
+        )
+
+    def _get_usuario_super(self, usuario_id: uuid.UUID) -> UsuarioConta:
+        usuario = self.db.get(UsuarioConta, usuario_id)
+        if not usuario:
+            raise not_found()
+        if usuario.tipo_perfil == TipoPerfil.super_admin:
+            raise forbidden("Detalhe de super_admin não disponível nesta tela")
+        return usuario
+
+    def detalhe_usuario_super(self, usuario_id: uuid.UUID) -> UsuarioDetalheResponse:
+        u = self._get_usuario_super(usuario_id)
+        inst_resp = self._instituicao_response(u.instituicao_id)
+        base = dict(
+            usuario_id=u.id,
+            tipo_perfil=u.tipo_perfil,
+            nome_exibicao=u.nome_exibicao,
+            email=str(u.email),
+            status_conta=u.status_conta,
+            instituicao=inst_resp,
+        )
+        if u.tipo_perfil == TipoPerfil.aluno and u.aluno:
+            det = self.detalhe_aluno_super(u.aluno.id)
+            matriculas_rows = self.db.execute(
+                select(Matricula, Turma)
+                .join(Turma, Matricula.turma_id == Turma.id)
+                .where(Matricula.aluno_id == u.aluno.id)
+                .order_by(Matricula.data_inicio.desc())
+            ).all()
+            return UsuarioDetalheResponse(
+                **base,
+                aluno_id=u.aluno.id,
+                matricula_codigo=det.matricula_codigo,
+                data_nascimento=det.data_nascimento,
+                nome_social=det.nome_social,
+                turmas=det.turmas,
+                matriculas=[
+                    MatriculaDetalheItem(
+                        id=m.id,
+                        turma_id=m.turma_id,
+                        turma_nome=t.nome,
+                        ano_letivo=t.ano_letivo,
+                        data_inicio=m.data_inicio,
+                        situacao=m.situacao,
+                    )
+                    for m, t in matriculas_rows
+                ],
+                responsaveis=det.responsaveis,
+            )
+        if u.tipo_perfil == TipoPerfil.professor and u.professor:
+            det = self.detalhe_professor_super(u.professor.id)
+            return UsuarioDetalheResponse(
+                **base,
+                professor_id=u.professor.id,
+                registro_funcional=det.registro_funcional,
+                areas_especialidade=det.areas_especialidade,
+                turmas_titulares=det.turmas_titulares,
+            )
+        if u.tipo_perfil == TipoPerfil.responsavel and u.responsavel:
+            resp = u.responsavel
+            rows = self.db.execute(
+                select(AlunoResponsavel, Aluno, UsuarioConta)
+                .join(Aluno, AlunoResponsavel.aluno_id == Aluno.id)
+                .join(UsuarioConta, Aluno.usuario_id == UsuarioConta.id)
+                .where(AlunoResponsavel.responsavel_id == resp.id)
+            ).all()
+            alunos_vinc: list[AlunoVinculoItem] = []
+            for _ar, aluno, au in rows:
+                turmas_rows = self.db.execute(
+                    select(Turma)
+                    .join(Matricula, Matricula.turma_id == Turma.id)
+                    .where(
+                        Matricula.aluno_id == aluno.id,
+                        Matricula.situacao == SituacaoMatricula.ativa,
+                    )
+                ).scalars().all()
+                alunos_vinc.append(
+                    AlunoVinculoItem(
+                        id=aluno.id,
+                        usuario_id=au.id,
+                        nome_exibicao=au.nome_exibicao,
+                        matricula_codigo=aluno.matricula_codigo,
+                        turmas=[self._turma_resumo(t) for t in turmas_rows],
+                    )
+                )
+            return UsuarioDetalheResponse(
+                **base,
+                responsavel_id=resp.id,
+                grau_parentesco=resp.grau_parentesco,
+                telefone=resp.telefone,
+                alunos_vinculados=alunos_vinc,
+            )
+        return UsuarioDetalheResponse(**base)
+
+    def editar_usuario_super(
+        self, usuario_id: uuid.UUID, body: UsuarioSuperAdminPatch
+    ) -> UsuarioDetalheResponse:
+        u = self._get_usuario_super(usuario_id)
+        data = body.model_dump(exclude_unset=True)
+        if "email" in data and data["email"]:
+            self._check_email_unique(str(data["email"]), u.instituicao_id, exclude_id=u.id)
+            u.email = data.pop("email")
+        if "senha" in data and data["senha"]:
+            u.senha_hash = hash_password(data.pop("senha"))
+        if "nome_exibicao" in data and data["nome_exibicao"]:
+            u.nome_exibicao = data.pop("nome_exibicao")
+        if u.aluno:
+            if "matricula_codigo" in data:
+                u.aluno.matricula_codigo = data.pop("matricula_codigo")
+            if "data_nascimento" in data:
+                u.aluno.data_nascimento = data.pop("data_nascimento")
+            if "nome_social" in data:
+                u.aluno.nome_social = data.pop("nome_social")
+        if u.professor:
+            if "registro_funcional" in data:
+                u.professor.registro_funcional = data.pop("registro_funcional")
+            if "areas_especialidade" in data:
+                u.professor.areas_especialidade = data.pop("areas_especialidade")
+        if u.responsavel:
+            if "grau_parentesco" in data:
+                u.responsavel.grau_parentesco = data.pop("grau_parentesco")
+            if "telefone" in data:
+                u.responsavel.telefone = data.pop("telefone")
+        self.db.commit()
+        return self.detalhe_usuario_super(usuario_id)
+
+    def desativar_usuario_super(
+        self, actor: CurrentUser, usuario_id: uuid.UUID
+    ) -> None:
+        if actor.usuario_id == usuario_id:
+            raise bad_request("Não é possível desativar a própria conta")
+        u = self._get_usuario_super(usuario_id)
+        u.status_conta = StatusConta.suspensa
+        self.db.commit()
+
+    def associar_usuario_instituicao_super(
+        self, usuario_id: uuid.UUID, body: AssociarUsuarioInstituicaoBody
+    ) -> UsuarioDetalheResponse:
+        u = self._get_usuario_super(usuario_id)
+        inst = self.db.get(Instituicao, body.instituicao_id)
+        if not inst:
+            raise not_found("Instituição não encontrada")
+        if u.instituicao_id == body.instituicao_id:
+            return self.detalhe_usuario_super(usuario_id)
+        if u.aluno:
+            outras = self.db.execute(
+                select(Matricula, Turma)
+                .join(Turma, Matricula.turma_id == Turma.id)
+                .where(
+                    Matricula.aluno_id == u.aluno.id,
+                    Matricula.situacao == SituacaoMatricula.ativa,
+                    Turma.instituicao_id != body.instituicao_id,
+                )
+            ).first()
+            if outras:
+                raise bad_request(
+                    "Encerre matrículas ativas em outra instituição antes de transferir o aluno"
+                )
+        if u.professor:
+            turmas_outras = self.db.scalar(
+                select(func.count())
+                .select_from(Turma)
+                .where(
+                    Turma.professor_titular_id == u.professor.id,
+                    Turma.instituicao_id != body.instituicao_id,
+                )
+            )
+            if turmas_outras and turmas_outras > 0:
+                raise bad_request(
+                    "Desassocie o professor das turmas em outra instituição antes de transferir"
+                )
+        u.instituicao_id = body.instituicao_id
+        self.db.commit()
+        return self.detalhe_usuario_super(usuario_id)
+
+    def criar_matriculas_lote_super(self, body: MatriculasLoteCreate) -> LoteResultadoResponse:
+        turma = self.db.get(Turma, body.turma_id)
+        if not turma or turma.instituicao_id != body.instituicao_id:
+            raise not_found("Turma não encontrada na instituição")
+        sucesso: list[uuid.UUID] = []
+        falhas: list[LoteFalhaItem] = []
+        for aluno_id in body.aluno_ids:
+            try:
+                aluno = self.get_aluno(body.instituicao_id, aluno_id)
+                existente = self.db.scalar(
+                    select(Matricula).where(
+                        Matricula.aluno_id == aluno.id,
+                        Matricula.turma_id == body.turma_id,
+                        Matricula.situacao == SituacaoMatricula.ativa,
+                    )
+                )
+                if existente:
+                    sucesso.append(aluno_id)
+                    continue
+                outra_ativa = self.db.scalar(
+                    select(Matricula)
+                    .join(Turma, Matricula.turma_id == Turma.id)
+                    .where(
+                        Matricula.aluno_id == aluno.id,
+                        Matricula.situacao == SituacaoMatricula.ativa,
+                        Turma.instituicao_id == body.instituicao_id,
+                        Matricula.turma_id != body.turma_id,
+                    )
+                )
+                if outra_ativa:
+                    falhas.append(
+                        LoteFalhaItem(
+                            id=aluno_id,
+                            motivo="Aluno já possui matrícula ativa em outra turma",
+                        )
+                    )
+                    continue
+                self.db.add(
+                    Matricula(
+                        aluno_id=aluno.id,
+                        turma_id=body.turma_id,
+                        data_inicio=body.data_inicio,
+                        situacao=SituacaoMatricula.ativa,
+                    )
+                )
+                sucesso.append(aluno_id)
+            except AppError as e:
+                falhas.append(LoteFalhaItem(id=aluno_id, motivo=e.message))
+            except Exception as e:
+                falhas.append(LoteFalhaItem(id=aluno_id, motivo=str(e)))
+        self.db.commit()
+        return LoteResultadoResponse(sucesso=sucesso, falhas=falhas)
+
+    def vincular_responsavel_alunos_lote_super(
+        self, body: VincularResponsavelAlunosLoteBody
+    ) -> LoteResultadoResponse:
+        resp = self.get_responsavel(body.instituicao_id, body.responsavel_id)
+        sucesso: list[uuid.UUID] = []
+        falhas: list[LoteFalhaItem] = []
+        for aluno_id in body.aluno_ids:
+            try:
+                aluno = self.get_aluno(body.instituicao_id, aluno_id)
+                existing = self.db.scalar(
+                    select(AlunoResponsavel).where(
+                        AlunoResponsavel.aluno_id == aluno.id,
+                        AlunoResponsavel.responsavel_id == resp.id,
+                    )
+                )
+                if existing:
+                    sucesso.append(aluno_id)
+                    continue
+                self.db.add(
+                    AlunoResponsavel(
+                        aluno_id=aluno.id,
+                        responsavel_id=resp.id,
+                        responsavel_principal=body.responsavel_principal,
+                    )
+                )
+                sucesso.append(aluno_id)
+            except AppError as e:
+                falhas.append(LoteFalhaItem(id=aluno_id, motivo=e.message))
+            except Exception as e:
+                falhas.append(LoteFalhaItem(id=aluno_id, motivo=str(e)))
+        self.db.commit()
+        return LoteResultadoResponse(sucesso=sucesso, falhas=falhas)
+
+    def desvincular_responsavel_alunos_lote_super(
+        self, body: DesvincularResponsavelAlunosLoteBody
+    ) -> LoteResultadoResponse:
+        self.get_responsavel(body.instituicao_id, body.responsavel_id)
+        sucesso: list[uuid.UUID] = []
+        falhas: list[LoteFalhaItem] = []
+        for aluno_id in body.aluno_ids:
+            try:
+                self.desvincular_responsavel(
+                    body.instituicao_id, aluno_id, body.responsavel_id
+                )
+                sucesso.append(aluno_id)
+            except AppError as e:
+                falhas.append(LoteFalhaItem(id=aluno_id, motivo=e.message))
+            except Exception as e:
+                falhas.append(LoteFalhaItem(id=aluno_id, motivo=str(e)))
+        return LoteResultadoResponse(sucesso=sucesso, falhas=falhas)
+
+    def associar_professor_turmas_lote(
+        self, body: AssociarProfessorTurmasLoteBody
+    ) -> LoteResultadoResponse:
+        prof = self.db.get(Professor, body.professor_id)
+        if not prof or not prof.usuario or prof.usuario.instituicao_id != body.instituicao_id:
+            raise not_found("Professor não encontrado na instituição")
+        titular_tid = body.professor_titular_turma_id
+        if titular_tid and titular_tid not in body.turma_ids:
+            raise bad_request("professor_titular_turma_id deve estar em turma_ids")
+        sucesso: list[uuid.UUID] = []
+        falhas: list[LoteFalhaItem] = []
+        for turma_id in body.turma_ids:
+            try:
+                turma = self.db.get(Turma, turma_id)
+                if not turma or turma.instituicao_id != body.instituicao_id:
+                    falhas.append(LoteFalhaItem(id=turma_id, motivo="Turma não encontrada"))
+                    continue
+                eh_titular = titular_tid == turma_id if titular_tid else False
+                self._vincular_professor_turma(turma, prof.id, eh_titular=eh_titular)
+                sucesso.append(turma_id)
+            except AppError as e:
+                falhas.append(LoteFalhaItem(id=turma_id, motivo=e.message))
+            except Exception as e:
+                falhas.append(LoteFalhaItem(id=turma_id, motivo=str(e)))
+        self.db.commit()
+        return LoteResultadoResponse(sucesso=sucesso, falhas=falhas)
+
+    def associar_professor_turmas_lote_super(
+        self, body: AssociarProfessorTurmasLoteBody
+    ) -> LoteResultadoResponse:
+        if body.professor_titular_turma_id is None and len(body.turma_ids) == 1:
+            body = body.model_copy(
+                update={"professor_titular_turma_id": body.turma_ids[0]}
+            )
+        return self.associar_professor_turmas_lote(body)
+
+    def associar_professores_turma_lote(
+        self, body: AssociarProfessoresTurmaLoteBody
+    ) -> LoteResultadoResponse:
+        turma = self.db.get(Turma, body.turma_id)
+        if not turma or turma.instituicao_id != body.instituicao_id:
+            raise not_found("Turma não encontrada na instituição")
+        titular_id = body.professor_titular_id
+        if titular_id and titular_id not in body.professor_ids:
+            raise bad_request("professor_titular_id deve estar em professor_ids")
+        sucesso: list[uuid.UUID] = []
+        falhas: list[LoteFalhaItem] = []
+        for professor_id in body.professor_ids:
+            try:
+                eh_titular = titular_id == professor_id if titular_id else False
+                self._vincular_professor_turma(turma, professor_id, eh_titular=eh_titular)
+                sucesso.append(professor_id)
+            except AppError as e:
+                falhas.append(LoteFalhaItem(id=professor_id, motivo=e.message))
+            except Exception as e:
+                falhas.append(LoteFalhaItem(id=professor_id, motivo=str(e)))
+        if titular_id is None and len(body.professor_ids) == 1:
+            self._definir_titular_turma(turma, body.professor_ids[0])
+        self.db.commit()
+        return LoteResultadoResponse(sucesso=sucesso, falhas=falhas)
+
+    def associar_professores_turma_lote_super(
+        self, body: AssociarProfessoresTurmaLoteBody
+    ) -> LoteResultadoResponse:
+        return self.associar_professores_turma_lote(body)
+
+    def desassociar_professor_turmas_lote(
+        self, body: DesassociarProfessorTurmasLoteBody
+    ) -> LoteResultadoResponse:
+        sucesso: list[uuid.UUID] = []
+        falhas: list[LoteFalhaItem] = []
+        for turma_id in body.turma_ids:
+            try:
+                turma = self.db.get(Turma, turma_id)
+                if not turma or turma.instituicao_id != body.instituicao_id:
+                    falhas.append(LoteFalhaItem(id=turma_id, motivo="Turma não encontrada"))
+                    continue
+                if body.professor_id:
+                    vinc = self.db.scalar(
+                        select(TurmaProfessor).where(
+                            TurmaProfessor.turma_id == turma_id,
+                            TurmaProfessor.professor_id == body.professor_id,
+                        )
+                    )
+                    if vinc:
+                        if vinc.eh_titular:
+                            self._limpar_titular_turma(turma)
+                        self.db.delete(vinc)
+                else:
+                    self._limpar_titular_turma(turma)
+                    for v in self.db.scalars(
+                        select(TurmaProfessor).where(TurmaProfessor.turma_id == turma_id)
+                    ).all():
+                        self.db.delete(v)
+                sucesso.append(turma_id)
+            except AppError as e:
+                falhas.append(LoteFalhaItem(id=turma_id, motivo=e.message))
+            except Exception as e:
+                falhas.append(LoteFalhaItem(id=turma_id, motivo=str(e)))
+        self.db.commit()
+        return LoteResultadoResponse(sucesso=sucesso, falhas=falhas)
+
+    def desassociar_professor_turmas_lote_super(
+        self, body: DesassociarProfessorTurmasLoteBody
+    ) -> LoteResultadoResponse:
+        return self.desassociar_professor_turmas_lote(body)
+
+    def criar_matriculas_lote(self, user: CurrentUser, body: MatriculasLoteCreate) -> LoteResultadoResponse:
+        if user.perfil != TipoPerfil.super_admin:
+            if not user.instituicao_id:
+                raise forbidden("Instituição obrigatória")
+            body = body.model_copy(update={"instituicao_id": user.instituicao_id})
+        return self.criar_matriculas_lote_super(body)
+
+    def patch_matricula_super(
+        self, mat_id: uuid.UUID, instituicao_id: uuid.UUID, body: MatriculaPatch
+    ) -> MatriculaResponse:
+        return self.patch_matricula(instituicao_id, mat_id, body)

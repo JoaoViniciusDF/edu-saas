@@ -15,12 +15,33 @@ Variáveis principais no `.env` da raiz: `POSTGRES_HOST_PORT=5434`, `FRONTEND_PO
 
 Se a porta 3000 já estiver em uso (ex.: `next dev` local), altere `FRONTEND_PORT` e `CORS_ORIGINS` no `.env`, ou pare o processo que ocupa a porta.
 
-Na primeira execução ou após mudar credenciais do banco, recrie o volume:
+Na primeira execução, após consolidar migrations ou se `alembic upgrade` falhar, recrie o volume:
 
 ```bash
 docker compose down -v
 docker compose up --build
 ```
+
+Na **primeira execução** (ou após mudanças de migration), rode migrations manualmente:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+O container sobe apenas o uvicorn com `--reload` (sem rodar Alembic a cada restart).
+
+### Dev rápido no Windows
+
+Para compilação e HMR mais rápidos, suba só DB + backend no Docker e rode o frontend **nativo** no host:
+
+```bash
+docker compose up db backend
+cd frontend && npm ci && npm run dev
+```
+
+Defina `NEXT_PUBLIC_API_URL=http://localhost:8000` no ambiente do frontend (ou `.env.local`).
+
+Se usar o frontend no Docker com bind mount no Windows e o HMR falhar, defina `FRONTEND_USE_POLLING=true` no `.env`.
 
 - Frontend: http://localhost:3000 (ou valor de `FRONTEND_PORT`)
 - API: http://localhost:8000
@@ -31,7 +52,9 @@ docker compose up --build
 
 ## Bootstrap demo
 
-Executado via migration Alembic `003` e re-sincronizado no startup do container (`python -m scripts.seed`). Senha padrão: **admin123**
+Executado via migration Alembic `002`. Senha padrão: **admin123**
+
+Para re-sincronizar dados demo sem recriar o volume: `python -m scripts.seed`
 
 | Email | Perfil |
 |-------|--------|
@@ -43,7 +66,7 @@ Executado via migration Alembic `003` e re-sincronizado no startup do container 
 | aluno2@edu.com.br | aluno |
 | responsavel@edu.com.br | responsavel |
 
-Instituição de teste: **Escola Demo Edu** — turma 3º Ano A, matérias (Matemática, Português, Ciências), avaliações, materiais de conteúdo e comunicado de exemplo.
+Instituição de teste: **Escola Demo Edu** — turma 3º Ano A, matérias (Matemática, Português, Ciências) com assuntos, materiais de conteúdo e comunicado de exemplo. **Avaliações não são pré-criadas** — crie-as pela UI em `/avaliacoes` para testar provas.
 
 ## Teste rápido (curl)
 
@@ -93,9 +116,9 @@ Ver `.env.example`: `DATABASE_URL`, `JWT_SECRET`, `JWT_ACCESS_MINUTES`, `JWT_REF
 cd backend
 pip install -e .
 cp .env.example .env
-# Ajuste DATABASE_URL para localhost se o Postgres estiver no Docker
+# Ajuste DATABASE_URL para localhost:5434 se o Postgres estiver no Docker
 alembic upgrade head
-python -m scripts.seed
+python -m scripts.seed   # opcional; migration 002 já inclui demo bootstrap
 uvicorn app.main:app --reload
 ```
 

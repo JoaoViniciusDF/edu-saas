@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Building2 } from "lucide-react"
+import { Building2, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,6 +15,13 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { configuracoesRequests } from "@/lib/api/requests/configuracoes"
+import { queryKeys } from "@/lib/cache/query-keys"
+import {
+  emailValido,
+  gerarSenhaAleatoria,
+  mascaraDocumentoLegal,
+  mensagemErroApi,
+} from "@/lib/formatacao/mascaras"
 
 interface Props {
   aberto: boolean
@@ -27,7 +34,7 @@ export function ModalCriarInstituicao({ aberto, onOpenChange }: Props) {
   const [documento, setDocumento] = React.useState("")
   const [adminEmail, setAdminEmail] = React.useState("")
   const [adminNome, setAdminNome] = React.useState("")
-  const [adminSenha, setAdminSenha] = React.useState("Demo@2026")
+  const [adminSenha, setAdminSenha] = React.useState("")
   const [salvando, setSalvando] = React.useState(false)
 
   const reset = () => {
@@ -35,11 +42,24 @@ export function ModalCriarInstituicao({ aberto, onOpenChange }: Props) {
     setDocumento("")
     setAdminEmail("")
     setAdminNome("")
-    setAdminSenha("Demo@2026")
+    setAdminSenha("")
   }
+
+  const blocoAdminPreenchido =
+    adminEmail.trim() || adminNome.trim() || adminSenha.trim()
 
   const salvar = async () => {
     if (!nome.trim()) return
+    if (blocoAdminPreenchido) {
+      if (!emailValido(adminEmail)) {
+        toast.error("Informe um e-mail válido para o administrador inicial")
+        return
+      }
+      if (adminSenha.trim().length < 6) {
+        toast.error("A senha do administrador deve ter pelo menos 6 caracteres")
+        return
+      }
+    }
     setSalvando(true)
     try {
       await configuracoesRequests.createInstituicao({
@@ -47,18 +67,20 @@ export function ModalCriarInstituicao({ aberto, onOpenChange }: Props) {
         documento_legal: documento.trim() || undefined,
         administrador_inicial: adminEmail.trim()
           ? {
-              email: adminEmail.trim(),
+              email: adminEmail.trim().toLowerCase(),
               senha: adminSenha,
               nome_exibicao: adminNome.trim() || "Administrador",
             }
           : undefined,
       })
       toast.success("Instituição criada com sucesso!")
-      void qc.invalidateQueries({ queryKey: ["super-admin"] })
+      void qc.invalidateQueries({ queryKey: queryKeys.superAdmin.resumo() })
+      void qc.invalidateQueries({ queryKey: ["super-admin", "diretorio"] })
+      void qc.invalidateQueries({ queryKey: queryKeys.superAdmin.instituicoes() })
       reset()
       onOpenChange(false)
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error(mensagemErroApi(e))
     } finally {
       setSalvando(false)
     }
@@ -88,9 +110,10 @@ export function ModalCriarInstituicao({ aberto, onOpenChange }: Props) {
             <Label>Documento legal</Label>
             <Input
               value={documento}
-              onChange={(e) => setDocumento(e.target.value)}
+              onChange={(e) => setDocumento(mascaraDocumentoLegal(e.target.value))}
               className="rounded-xl"
-              placeholder="CNPJ ou CPF"
+              placeholder="CPF ou CNPJ"
+              inputMode="numeric"
             />
           </div>
           <div className="rounded-xl border border-border/50 bg-muted/30 p-4 space-y-3">
@@ -102,6 +125,8 @@ export function ModalCriarInstituicao({ aberto, onOpenChange }: Props) {
                 onChange={(e) => setAdminEmail(e.target.value)}
                 className="rounded-xl"
                 type="email"
+                autoComplete="email"
+                placeholder="admin@escola.com.br"
               />
             </div>
             <div className="space-y-2">
@@ -109,12 +134,26 @@ export function ModalCriarInstituicao({ aberto, onOpenChange }: Props) {
               <Input value={adminNome} onChange={(e) => setAdminNome(e.target.value)} className="rounded-xl" />
             </div>
             <div className="space-y-2">
-              <Label>Senha inicial</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Senha inicial</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 rounded-lg text-xs"
+                  onClick={() => setAdminSenha(gerarSenhaAleatoria())}
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Gerar senha
+                </Button>
+              </div>
               <Input
                 type="password"
                 value={adminSenha}
                 onChange={(e) => setAdminSenha(e.target.value)}
                 className="rounded-xl"
+                autoComplete="new-password"
+                placeholder="Mínimo 6 caracteres"
               />
             </div>
           </div>

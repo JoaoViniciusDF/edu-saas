@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -67,8 +67,12 @@ class AvaliacaoListItem(BaseModel):
     id: UUID
     titulo: str
     status: StatusAvaliacao
+    turma_id: UUID | None = None
+    turma_nome: str | None = None
     prazo_utc: datetime | None = None
     publicado_em: datetime | None = None
+    total_submissoes: int | None = None
+    total_alunos_turma: int | None = None
 
 
 class AvaliacaoDetail(BaseModel):
@@ -76,6 +80,8 @@ class AvaliacaoDetail(BaseModel):
     pasta_id: UUID
     titulo: str
     status: StatusAvaliacao
+    turma_id: UUID | None = None
+    turma_nome: str | None = None
     prazo_utc: datetime | None = None
     publicado_em: datetime | None = None
     encerrada_em: datetime | None = None
@@ -85,9 +91,14 @@ class AvaliacaoDetail(BaseModel):
     questoes: list["QuestaoResponse"] = []
 
 
+class AvaliacaoPublicar(BaseModel):
+    turma_id: UUID
+
+
 class AvaliacaoCreate(BaseModel):
     titulo: str = Field(min_length=1)
     prazo_utc: datetime | None = None
+    turma_id: UUID | None = None
 
 
 class AvaliacaoPatch(BaseModel):
@@ -157,11 +168,20 @@ class ArvoreMateria(BaseModel):
     assuntos: list[ArvoreAssunto]
 
 
+SituacaoAvaliacaoAluno = Literal["pendente", "em_andamento", "concluida"]
+
+
 class AlunoAvaliacaoDisponivel(BaseModel):
     id: UUID
     titulo: str
+    turma_id: UUID
+    turma_nome: str
     prazo_utc: datetime | None = None
+    status_avaliacao: StatusAvaliacao
     status_submissao: StatusSubmissao | None = None
+    situacao: SituacaoAvaliacaoAluno
+    nota_decimal: Decimal | None = None
+    percentual_acerto: float | None = None
 
 
 class AlunoAvaliacaoView(BaseModel):
@@ -170,6 +190,42 @@ class AlunoAvaliacaoView(BaseModel):
     prazo_utc: datetime | None = None
     questoes: list["QuestaoAlunoView"]
     submissao_id: UUID | None = None
+    status_submissao: StatusSubmissao | None = None
+    situacao: SituacaoAvaliacaoAluno | None = None
+    somente_leitura: bool = False
+    exibir_gabarito: bool = False
+    nota_decimal: Decimal | None = None
+    percentual_acerto: float | None = None
+    total_questoes: int = 0
+    questoes_corretas: int = 0
+    respostas: list["RespostaQuestaoInput"] = []
+
+
+class AvaliacaoDuplicar(BaseModel):
+    pasta_id: UUID | None = None
+    titulo: str | None = None
+
+
+class AvaliacaoReabrir(BaseModel):
+    prazo_utc: datetime | None = None
+
+
+class SubmissaoResumoProfessor(BaseModel):
+    submissao_id: UUID | None = None
+    aluno_id: UUID
+    aluno_nome: str
+    situacao: SituacaoAvaliacaoAluno
+    status_submissao: StatusSubmissao | None = None
+    nota_decimal: Decimal | None = None
+    percentual_acerto: float | None = None
+    enviada_em: datetime | None = None
+
+
+class SubmissoesAvaliacaoProfessor(BaseModel):
+    total_alunos: int
+    total_concluidas: int
+    total_pendentes: int
+    alunos: list[SubmissaoResumoProfessor]
 
 
 class QuestaoAlunoView(BaseModel):
@@ -179,6 +235,9 @@ class QuestaoAlunoView(BaseModel):
     enunciado: str
     conteudo: dict[str, Any] | None = None
     alternativas: list[str] | None = None
+    indice_resposta_aluno: int | None = None
+    indice_gabarito: int | None = None
+    acertou: bool | None = None
 
 
 class RespostaQuestaoInput(BaseModel):
@@ -196,6 +255,7 @@ class SubmissaoResponse(BaseModel):
     avaliacao_id: UUID
     status: StatusSubmissao
     nota_decimal: Decimal | None = None
+    percentual_acerto: float | None = None
     enviada_em: datetime | None = None
 
 

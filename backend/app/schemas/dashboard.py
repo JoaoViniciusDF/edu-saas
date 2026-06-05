@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -53,3 +53,31 @@ class DashboardSerieItem(BaseModel):
 
 class DashboardSeriesResponse(BaseModel):
     items: list[DashboardSerieItem] = Field(default_factory=list)
+
+
+class DesempenhoAvaliacaoItem(BaseModel):
+    id: UUID
+    titulo: str
+    percentual: float | None = None
+    nota_decimal: Decimal | None = None
+    situacao: str
+    enviada_em: datetime | None = None
+    aluno_nome: str | None = None
+
+
+class DesempenhoAssuntoItem(BaseModel):
+    id: UUID
+    nome: str
+    media_percentual: float | None = None
+    avaliacoes: list[DesempenhoAvaliacaoItem] = Field(default_factory=list)
+
+
+class DesempenhoMateriaItem(BaseModel):
+    id: UUID
+    nome: str
+    media_percentual: float | None = None
+    assuntos: list[DesempenhoAssuntoItem] = Field(default_factory=list)
+
+
+class DashboardDesempenhoAvaliacoesResponse(BaseModel):
+    materias: list[DesempenhoMateriaItem] = Field(default_factory=list)

@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { configuracoesRequests } from "@/lib/api/requests/configuracoes"
+import { queryKeys } from "@/lib/cache/query-keys"
 import type { TipoPerfilUsuario, VisaoPlataforma } from "@/lib/api/dtos/configuracoes"
 import { cn } from "@/lib/utils"
 import { LABEL_PERFIL, LABEL_VISAO, VISAO_OPCOES } from "./utils"
@@ -57,7 +58,7 @@ export function FiltrosDiretorio({
   const instId = instituicaoFixa ?? filtros.instituicaoId
 
   const { data: instituicoes } = useQuery({
-    queryKey: ["super-admin", "instituicoes-lista"],
+    queryKey: queryKeys.superAdmin.instituicoes(),
     queryFn: async () => (await configuracoesRequests.listInstituicoes()).items,
   })
 

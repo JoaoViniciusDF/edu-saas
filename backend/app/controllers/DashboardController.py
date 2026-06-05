@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, Response, status
 
 from app.api.deps import AuthUser, CurrentUser, DbSession, require_perfis
 from app.models.enums import TipoPerfil
-from app.schemas.dashboard import DashboardResumo, DashboardSeriesResponse, NotificacaoItem, SearchHit
+from app.schemas.dashboard import (
+    DashboardDesempenhoAvaliacoesResponse,
+    DashboardResumo,
+    DashboardSeriesResponse,
+    NotificacaoItem,
+    SearchHit,
+)
 from app.services.dashboard_service import DashboardService
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -43,16 +49,35 @@ def consultar_resumo(
     return _svc(db).resumo(user, escopo, turma_id, aluno_id, data_inicio, data_fim)
 
 
+@router.get(
+    "/consultar-desempenho-avaliacoes",
+    response_model=DashboardDesempenhoAvaliacoesResponse,
+)
+def consultar_desempenho_avaliacoes(
+    user: DashboardUser,
+    db: DbSession,
+    escopo: str | None = None,
+    turma_id: uuid.UUID | None = None,
+    aluno_id: uuid.UUID | None = None,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+) -> DashboardDesempenhoAvaliacoesResponse:
+    return _svc(db).desempenho_avaliacoes(
+        user, escopo, turma_id, aluno_id, data_inicio, data_fim
+    )
+
+
 @router.get("/consultar-series", response_model=DashboardSeriesResponse)
 def consultar_series(
     user: DashboardUser,
     db: DbSession,
+    escopo: str | None = None,
     turma_id: uuid.UUID | None = None,
     aluno_id: uuid.UUID | None = None,
     data_inicio: date | None = None,
     data_fim: date | None = None,
 ) -> DashboardSeriesResponse:
-    return _svc(db).series(user, turma_id, aluno_id, data_inicio, data_fim)
+    return _svc(db).series(user, escopo, turma_id, aluno_id, data_inicio, data_fim)
 
 
 @router.get("/buscar", response_model=list[SearchHit])

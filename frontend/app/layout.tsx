@@ -10,14 +10,14 @@ import './globals.css'
 const inter = Inter({ 
   subsets: ["latin"],
   variable: "--font-sans",
-  weight: ["300", "400", "500", "600", "700", "800"],
+  weight: ["400", "600", "700"],
   display: "swap"
 });
 
 const manrope = Manrope({ 
   subsets: ["latin"],
   variable: "--font-display",
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["400", "600", "700"],
   display: "swap"
 });
 
@@ -59,7 +59,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="pt-BR" className={`${inter.variable} ${manrope.variable}`} suppressHydrationWarning>
+    <html lang="pt-BR" className={`light ${inter.variable} ${manrope.variable}`} suppressHydrationWarning>
       <body className="font-sans antialiased bg-background min-h-screen text-[15px] tracking-[-0.01em]">
         <ProvedorQuery>
           <ProvedorAuth>

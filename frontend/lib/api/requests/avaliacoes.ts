@@ -2,6 +2,8 @@ import { bffRequest } from "../client"
 import type {
   AlunoAvaliacaoDisponivel,
   AlunoAvaliacaoView,
+  AvaliacaoDuplicar,
+  AvaliacaoReabrir,
   ArvoreMateria,
   AssuntoCreate,
   AssuntoPatch,
@@ -10,6 +12,7 @@ import type {
   AvaliacaoDetail,
   AvaliacaoListItem,
   AvaliacaoPatch,
+  AvaliacaoPublicar,
   MateriaCreate,
   MateriaPatch,
   MateriaResponse,
@@ -21,6 +24,7 @@ import type {
   QuestoesBulkReplace,
   QuestoesReorder,
   SubmissaoPatch,
+  SubmissoesAvaliacaoProfessor,
   SubmissaoResponse,
 } from "../dtos/avaliacoes"
 
@@ -32,8 +36,12 @@ export const avaliacoesRequests = {
     bffRequest<MateriaResponse>(`/avaliacoes/editar-materia/${id}`, { method: "PUT", body }),
   deleteMateria: (id: string) =>
     bffRequest<void>(`/avaliacoes/apagar-materia/${id}`, { method: "DELETE" }),
-  getArvore: (materiaId: string) =>
-    bffRequest<ArvoreMateria>(`/avaliacoes/consultar-arvore-materia/${materiaId}`),
+  getArvore: (materiaId: string, turmaId?: string | null) => {
+    const q = turmaId ? `?turma_id=${turmaId}` : ""
+    return bffRequest<ArvoreMateria>(
+      `/avaliacoes/consultar-arvore-materia/${materiaId}${q}`
+    )
+  },
   createAssunto: (materiaId: string, body: AssuntoCreate) =>
     bffRequest<AssuntoResponse>(`/avaliacoes/criar-assunto/${materiaId}`, {
       method: "POST",
@@ -51,8 +59,12 @@ export const avaliacoesRequests = {
   getPasta: (id: string) => bffRequest<PastaResponse>(`/avaliacoes/consultar-pasta/${id}`),
   patchPasta: (id: string, body: PastaPatch) =>
     bffRequest<PastaResponse>(`/avaliacoes/editar-pasta/${id}`, { method: "PUT", body }),
-  listAvaliacoesPasta: (pastaId: string) =>
-    bffRequest<AvaliacaoListItem[]>(`/avaliacoes/consultar-avaliacoes-pasta/${pastaId}`),
+  listAvaliacoesPasta: (pastaId: string, turmaId?: string | null) => {
+    const q = turmaId ? `?turma_id=${turmaId}` : ""
+    return bffRequest<AvaliacaoListItem[]>(
+      `/avaliacoes/consultar-avaliacoes-pasta/${pastaId}${q}`
+    )
+  },
   createAvaliacao: (pastaId: string, body: AvaliacaoCreate) =>
     bffRequest<AvaliacaoDetail>(`/avaliacoes/criar-avaliacao/${pastaId}`, {
       method: "POST",
@@ -66,10 +78,39 @@ export const avaliacoesRequests = {
     bffRequest<AvaliacaoDetail>(`/avaliacoes/salvar-rascunho-avaliacao/${id}`, {
       method: "POST",
     }),
-  publicar: (id: string) =>
-    bffRequest<AvaliacaoDetail>(`/avaliacoes/publicar-avaliacao/${id}`, { method: "POST" }),
+  publicar: (id: string, body: AvaliacaoPublicar) =>
+    bffRequest<AvaliacaoDetail>(`/avaliacoes/publicar-avaliacao/${id}`, {
+      method: "POST",
+      body,
+    }),
   encerrar: (id: string) =>
     bffRequest<AvaliacaoDetail>(`/avaliacoes/encerrar-avaliacao/${id}`, { method: "POST" }),
+  inativar: (id: string) =>
+    bffRequest<AvaliacaoDetail>(`/avaliacoes/inativar-avaliacao/${id}`, { method: "POST" }),
+  apagar: (id: string) =>
+    bffRequest<void>(`/avaliacoes/apagar-avaliacao/${id}`, { method: "DELETE" }),
+  duplicar: (id: string, body?: AvaliacaoDuplicar) =>
+    bffRequest<AvaliacaoDetail>(`/avaliacoes/duplicar-avaliacao/${id}`, {
+      method: "POST",
+      body: body ?? {},
+    }),
+  reabrir: (id: string, body?: AvaliacaoReabrir) =>
+    bffRequest<AvaliacaoDetail>(`/avaliacoes/reabrir-avaliacao/${id}`, {
+      method: "POST",
+      body: body ?? {},
+    }),
+  listSubmissoes: (avaliacaoId: string) =>
+    bffRequest<SubmissoesAvaliacaoProfessor>(
+      `/avaliacoes/consultar-submissoes-avaliacao/${avaliacaoId}`
+    ),
+  getSubmissaoAluno: (avaliacaoId: string, alunoId: string) =>
+    bffRequest<AlunoAvaliacaoView>(
+      `/avaliacoes/consultar-submissao-avaliacao/${avaliacaoId}/${alunoId}`
+    ),
+  reabrirSubmissaoAluno: (submissaoId: string) =>
+    bffRequest<SubmissaoResponse>(`/avaliacoes/reabrir-submissao-aluno/${submissaoId}`, {
+      method: "POST",
+    }),
   replaceQuestoes: (id: string, body: QuestoesBulkReplace) =>
     bffRequest<AvaliacaoDetail>(`/avaliacoes/substituir-questoes-avaliacao/${id}`, {
       method: "PUT",
@@ -100,6 +141,14 @@ export const alunoAvaliacoesRequests = {
   disponiveis: () => bffRequest<AlunoAvaliacaoDisponivel[]>("/avaliacoes/consultar-disponiveis"),
   getView: (id: string) =>
     bffRequest<AlunoAvaliacaoView>(`/avaliacoes/consultar-avaliacao-resolver/${id}`),
+  disponiveisDependente: (alunoId: string) =>
+    bffRequest<AlunoAvaliacaoDisponivel[]>(
+      `/avaliacoes/consultar-avaliacoes-dependente?aluno_id=${alunoId}`
+    ),
+  getViewDependente: (id: string, alunoId: string) =>
+    bffRequest<AlunoAvaliacaoView>(
+      `/avaliacoes/consultar-avaliacao-dependente/${id}?aluno_id=${alunoId}`
+    ),
   createSubmissao: (avaliacaoId: string) =>
     bffRequest<SubmissaoResponse>(`/avaliacoes/iniciar-submissao/${avaliacaoId}`, {
       method: "POST",

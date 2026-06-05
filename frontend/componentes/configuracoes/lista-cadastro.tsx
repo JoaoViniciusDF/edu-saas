@@ -1,17 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Plus } from "lucide-react"
+import { Pencil, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   Table,
   TableBody,
@@ -20,6 +11,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import type { TipoCadastroWizard } from "@/componentes/configuracoes/wizards/modal-criar-cadastro-wizard"
+import { ModalCriarCadastroWizard } from "@/componentes/configuracoes/wizards/modal-criar-cadastro-wizard"
+import { ModalEditarCadastroWizard } from "@/componentes/configuracoes/wizards/modal-editar-cadastro-wizard"
+import { ModalGerenciarTurmaApp } from "@/componentes/configuracoes/modal-gerenciar-turma-app"
+import type { TurmaListItem } from "@/lib/api/dtos/configuracoes"
 
 type Coluna<T> = {
   key: string
@@ -27,15 +23,14 @@ type Coluna<T> = {
   render: (item: T) => React.ReactNode
 }
 
-type ListaCadastroProps<T> = {
+type ListaCadastroProps<T extends { id: string }> = {
   titulo: string
   itens: T[]
   colunas: Coluna<T>[]
   carregando?: boolean
-  camposCriar: { name: string; label: string; type?: string }[]
-  onCriar: (dados: Record<string, string>) => Promise<void>
-  acoesExtras?: (item: T) => React.ReactNode
+  tipoWizard?: TipoCadastroWizard
   ocultarCriar?: boolean
+  mostrarGerenciarTurma?: boolean
 }
 
 export function ListaCadastro<T extends { id: string }>({
@@ -43,29 +38,14 @@ export function ListaCadastro<T extends { id: string }>({
   itens,
   colunas,
   carregando,
-  camposCriar,
-  onCriar,
-  acoesExtras,
+  tipoWizard,
   ocultarCriar,
+  mostrarGerenciarTurma,
 }: ListaCadastroProps<T>) {
-  const [aberto, setAberto] = React.useState(false)
-  const [form, setForm] = React.useState<Record<string, string>>({})
-  const [erro, setErro] = React.useState<string | null>(null)
-  const [salvando, setSalvando] = React.useState(false)
-
-  const submit = async () => {
-    setErro(null)
-    setSalvando(true)
-    try {
-      await onCriar(form)
-      setAberto(false)
-      setForm({})
-    } catch (e: unknown) {
-      setErro((e as Error).message ?? "Erro ao salvar")
-    } finally {
-      setSalvando(false)
-    }
-  }
+  const [criarAberto, setCriarAberto] = React.useState(false)
+  const [editarAberto, setEditarAberto] = React.useState(false)
+  const [itemEditando, setItemEditando] = React.useState<T | null>(null)
+  const [turmaGerenciar, setTurmaGerenciar] = React.useState<TurmaListItem | null>(null)
 
   if (carregando) {
     return <p className="text-muted-foreground">Carregando...</p>
@@ -75,79 +55,85 @@ export function ListaCadastro<T extends { id: string }>({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{titulo}</h2>
-        {!ocultarCriar && (
-          <Button className="rounded-xl gap-2" onClick={() => setAberto(true)}>
-            <Plus className="h-4 w-4" />
-            Novo
+        {!ocultarCriar && tipoWizard && (
+          <Button className="rounded-xl gap-2" onClick={() => setCriarAberto(true)}>
+            Novo cadastro
           </Button>
         )}
       </div>
-      <div className="rounded-2xl border border-border/50">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {colunas.map((c) => (
-                <TableHead key={c.key}>{c.header}</TableHead>
-              ))}
-              {acoesExtras && <TableHead>Ações</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {itens.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={colunas.length + (acoesExtras ? 1 : 0)}
-                  className="text-muted-foreground"
-                >
-                  Nenhum registro.
-                </TableCell>
-              </TableRow>
-            ) : (
-              itens.map((item) => (
-                <TableRow key={item.id}>
-                  {colunas.map((c) => (
-                    <TableCell key={c.key}>{c.render(item)}</TableCell>
-                  ))}
-                  {acoesExtras && <TableCell>{acoesExtras(item)}</TableCell>}
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
 
-      {!ocultarCriar && (
-      <Dialog open={aberto} onOpenChange={setAberto}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>Novo cadastro</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {camposCriar.map((campo) => (
-              <div key={campo.name} className="space-y-1">
-                <Label>{campo.label}</Label>
-                <Input
-                  type={campo.type ?? "text"}
-                  value={form[campo.name] ?? ""}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, [campo.name]: e.target.value }))
-                  }
-                  className="rounded-xl"
-                />
-              </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            {colunas.map((c) => (
+              <TableHead key={c.key}>{c.header}</TableHead>
             ))}
-            {erro && <p className="text-sm text-destructive">{erro}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" className="rounded-xl" onClick={() => setAberto(false)}>
-              Cancelar
-            </Button>
-            <Button className="rounded-xl" disabled={salvando} onClick={() => void submit()}>
-              Salvar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            {tipoWizard && <TableHead className="w-[140px]">Ações</TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {itens.map((item) => (
+            <TableRow key={item.id}>
+              {colunas.map((c) => (
+                <TableCell key={c.key}>{c.render(item)}</TableCell>
+              ))}
+              {tipoWizard && (
+                <TableCell>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-lg"
+                      onClick={() => {
+                        setItemEditando(item)
+                        setEditarAberto(true)
+                      }}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    {mostrarGerenciarTurma && tipoWizard === "turma" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg"
+                        onClick={() => setTurmaGerenciar(item as unknown as TurmaListItem)}
+                      >
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              )}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+
+      {tipoWizard && (
+        <>
+          <ModalCriarCadastroWizard
+            tipo={tipoWizard}
+            aberto={criarAberto}
+            onOpenChange={setCriarAberto}
+          />
+          <ModalEditarCadastroWizard
+            tipo={tipoWizard}
+            item={itemEditando}
+            aberto={editarAberto}
+            onOpenChange={(v) => {
+              setEditarAberto(v)
+              if (!v) setItemEditando(null)
+            }}
+          />
+        </>
+      )}
+
+      {turmaGerenciar && (
+        <ModalGerenciarTurmaApp
+          open={!!turmaGerenciar}
+          onOpenChange={(v) => !v && setTurmaGerenciar(null)}
+          turma={turmaGerenciar}
+        />
       )}
     </div>
   )

@@ -7,6 +7,7 @@ import {
   GraduationCap,
   LogIn,
   Shield,
+  UserPlus,
   UserRound,
   Users,
   HeartHandshake,
@@ -16,6 +17,8 @@ import {
   FiltrosDiretorio,
   type FiltrosDiretorioState,
 } from "@/componentes/super-admin/filtros-diretorio"
+import { ModalCriarUsuarioInstituicaoWizard } from "@/componentes/super-admin/modal-criar-usuario-instituicao-wizard"
+import { ModalGerenciarTurma } from "@/componentes/super-admin/modal-gerenciar-turma"
 import { TabelaDiretorioPlataforma } from "@/componentes/super-admin/tabela-diretorio-plataforma"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -47,6 +50,8 @@ export default function InstituicaoDetalhePage() {
     perfil: "",
     busca: "",
   })
+  const [turmaGerenciar, setTurmaGerenciar] = React.useState<DiretorioPlataformaItem | null>(null)
+  const [modalUsuario, setModalUsuario] = React.useState(false)
 
   React.useEffect(() => {
     setFiltros((f) => ({ ...f, instituicaoId: id }))
@@ -118,41 +123,83 @@ export default function InstituicaoDetalhePage() {
       </div>
 
       <div className="space-y-4">
-        <h2
-          className="text-lg font-semibold"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          Pessoas da instituição
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2
+            className="text-lg font-semibold"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Pessoas da instituição
+          </h2>
+          <Button
+            className="rounded-xl gap-2 bg-gradient-to-br from-primary to-primary/80 shadow-soft"
+            onClick={() => setModalUsuario(true)}
+          >
+            <UserPlus className="h-4 w-4" />
+            Novo usuário
+          </Button>
+        </div>
         <FiltrosDiretorio
           filtros={filtros}
           onChange={setFiltros}
-          ocultarVisao
           instituicaoFixa={id}
+          visoesDisponiveis={["usuarios", "turmas"]}
         />
         <TabelaDiretorioPlataforma
-          filtros={{ ...filtros, visao: "usuarios", instituicaoId: id }}
+          filtros={{ ...filtros, instituicaoId: id }}
           queryKeyPrefix={`super-admin-inst-${id}`}
           onRowClick={(item) => {
-            if (item.perfil === "aluno" && item.aluno_id) {
-              router.push(`/super-admin/alunos/${item.aluno_id}`)
-            } else if (item.perfil === "professor" && item.professor_id) {
-              router.push(`/super-admin/professores/${item.professor_id}`)
+            if (filtros.visao === "turmas") {
+              setTurmaGerenciar(item)
+              return
             }
+            const uid = item.usuario_id ?? item.id
+            if (uid) router.push(`/super-admin/usuario/${uid}`)
           }}
-          renderAcoes={(item) =>
-            item.usuario_id && item.perfil !== "super_admin" ? (
+          renderAcoes={(item) => {
+            if (filtros.visao === "turmas") {
+              return (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setTurmaGerenciar(item)
+                  }}
+                >
+                  Gerenciar
+                </Button>
+              )
+            }
+            return item.usuario_id && item.perfil !== "super_admin" ? (
               <Button
                 size="sm"
                 variant="outline"
                 className="rounded-xl gap-1"
-                onClick={() => void entrarComo(item)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void entrarComo(item)
+                }}
               >
                 <LogIn className="h-3.5 w-3.5" />
                 Entrar como
               </Button>
             ) : null
-          }
+          }}
+        />
+        {turmaGerenciar && (
+          <ModalGerenciarTurma
+            open={!!turmaGerenciar}
+            onOpenChange={(o) => !o && setTurmaGerenciar(null)}
+            turma={turmaGerenciar}
+            instituicaoId={id}
+          />
+        )}
+        <ModalCriarUsuarioInstituicaoWizard
+          aberto={modalUsuario}
+          onOpenChange={setModalUsuario}
+          instituicaoId={id}
+          instituicaoNome={resumo.instituicao.nome_fantasia}
         />
       </div>
 

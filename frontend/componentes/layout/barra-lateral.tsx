@@ -10,6 +10,7 @@ import {
   Menu
 } from "lucide-react"
 import { useAuth } from "@/componentes/provedores/provedor-auth"
+import { SeletorTurmaAtiva } from "@/componentes/layout/seletor-turma-ativa"
 import { navPorPerfil, type ItemNav } from "@/lib/auth/nav-items"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -34,11 +35,13 @@ function ConteudoNavegacao({
   itensNavegacao,
   recolhido = false,
   aoFechar,
+  perfilProfessor = false,
 }: {
   pathname: string
   itensNavegacao: ItemNav[]
   recolhido?: boolean
   aoFechar?: () => void
+  perfilProfessor?: boolean
 }) {
   return (
     <TooltipProvider delayDuration={0}>
@@ -107,15 +110,7 @@ function ConteudoNavegacao({
           </div>
         </nav>
 
-        {/* Footer */}
-        {!recolhido && (
-          <div className="p-4 mx-3 mb-4 rounded-xl bg-gradient-to-br from-primary/10 to-accent">
-            <p className="text-xs font-medium text-foreground mb-1">Dica do dia</p>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Use o Dashboard para acompanhar o desempenho dos seus alunos em tempo real.
-            </p>
-          </div>
-        )}
+        {perfilProfessor && <SeletorTurmaAtiva recolhido={recolhido} />}
       </div>
     </TooltipProvider>
   )
@@ -125,6 +120,7 @@ export function BarraLateral() {
   const pathname = usePathname()
   const { usuario } = useAuth()
   const itensNavegacao = navPorPerfil(usuario?.perfil)
+  const perfilProfessor = usuario?.perfil === "professor"
   const [recolhido, setRecolhido] = React.useState(false)
   const [sheetAberto, setSheetAberto] = React.useState(false)
 
@@ -142,6 +138,7 @@ export function BarraLateral() {
             <ConteudoNavegacao
               pathname={pathname}
               itensNavegacao={itensNavegacao}
+              perfilProfessor={perfilProfessor}
               aoFechar={() => setSheetAberto(false)}
             />
           </SheetContent>
@@ -165,6 +162,7 @@ export function BarraLateral() {
           pathname={pathname}
           itensNavegacao={itensNavegacao}
           recolhido={recolhido}
+          perfilProfessor={perfilProfessor}
         />
 
         {/* Botão de recolher */}
