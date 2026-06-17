@@ -13,6 +13,7 @@ import type {
   AvaliacaoListItem,
   AvaliacaoPatch,
   AvaliacaoPublicar,
+  ChatMensagem,
   MateriaCreate,
   MateriaPatch,
   MateriaResponse,
@@ -135,6 +136,8 @@ export const avaliacoesRequests = {
     bffRequest<void>(`/avaliacoes/apagar-questao/${avaliacaoId}/${questaoId}`, {
       method: "DELETE",
     }),
+  chatIaHistorico: (avaliacaoId: string) =>
+    bffRequest<ChatMensagem[]>(`/avaliacoes/consultar-chat-ia/${avaliacaoId}`),
 }
 
 export const alunoAvaliacoesRequests = {

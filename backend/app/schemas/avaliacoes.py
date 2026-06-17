@@ -259,5 +259,18 @@ class SubmissaoResponse(BaseModel):
     enviada_em: datetime | None = None
 
 
+class IaGerarRequest(BaseModel):
+    mensagem: str = Field(min_length=1)
+    material_ids: list[UUID] = Field(default_factory=list)
+    pasta_ids: list[UUID] = Field(default_factory=list)
+
+
+class ChatMensagemResponse(BaseModel):
+    id: UUID
+    papel: str
+    conteudo: str
+    criado_em: datetime | None = None
+
+
 AvaliacaoDetail.model_rebuild()
 ArvoreMateria.model_rebuild()

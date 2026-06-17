@@ -90,14 +90,14 @@ export function ModalWizardShell({
         onOpenChange(v)
       }}
     >
-      <DialogContent className="rounded-3xl sm:max-w-xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[90vh] flex-col rounded-3xl sm:max-w-xl">
+        <DialogHeader className="shrink-0">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/80 shadow-soft">
             <Icone className="h-6 w-6 text-primary-foreground" />
           </div>
           <DialogTitle style={{ fontFamily: "var(--font-display)" }}>{titulo}</DialogTitle>
           <Progress value={((etapaAtual + 1) / etapas.length) * 100} className="mt-3 h-2" />
-          <div className="flex justify-between text-xs text-muted-foreground">
+          <div className="flex flex-wrap justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
             {etapas.map((e, i) => (
               <span key={e} className={cn(i <= etapaAtual && "font-semibold text-primary")}>
                 {i + 1}. {e}
@@ -106,9 +106,9 @@ export function ModalWizardShell({
           </div>
         </DialogHeader>
 
-        {children}
+        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 py-1">{children}</div>
 
-        <DialogFooter className="flex-row justify-between gap-2">
+        <DialogFooter className="shrink-0 flex-row justify-between gap-2">
           <Button
             variant="outline"
             className="rounded-xl gap-1"

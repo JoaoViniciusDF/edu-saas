@@ -13,6 +13,7 @@ import {
   WizardResumo,
   WizardResumoLinha,
 } from "@/components/ui/modal-wizard-shell"
+import { DropzoneArquivo, type ArquivoSelecionado } from "@/componentes/shared/dropzone-arquivo"
 import { conteudoRequests } from "@/lib/api/requests/conteudo"
 import type { TipoAnexoMaterial } from "@/lib/api/dtos/common"
 import { queryKeys } from "@/lib/cache/query-keys"
@@ -24,6 +25,14 @@ const TIPOS: { value: TipoAnexoMaterial; label: string; icone: typeof FileText }
   { value: "audio", label: "Áudio", icone: Headphones },
   { value: "imagem", label: "Imagem", icone: Image },
 ]
+
+const ACEITE_POR_TIPO: Record<TipoAnexoMaterial, string | undefined> = {
+  nota: undefined,
+  pdf: "application/pdf",
+  video: "video/*",
+  audio: "audio/*",
+  imagem: "image/*",
+}
 
 interface Props {
   pastaId: string
@@ -39,7 +48,7 @@ export function ModalCriarMaterialWizard({ pastaId, nomePasta, aberto, onOpenCha
   const [titulo, setTitulo] = React.useState("")
   const [descricao, setDescricao] = React.useState("")
   const [corpo, setCorpo] = React.useState("")
-  const [url, setUrl] = React.useState("")
+  const [arquivo, setArquivo] = React.useState<ArquivoSelecionado | null>(null)
   const [salvando, setSalvando] = React.useState(false)
 
   const reset = () => {
@@ -48,12 +57,12 @@ export function ModalCriarMaterialWizard({ pastaId, nomePasta, aberto, onOpenCha
     setTitulo("")
     setDescricao("")
     setCorpo("")
-    setUrl("")
+    setArquivo(null)
   }
 
   const podeAvancar = () => {
     if (etapa === 0) return !!tipo
-    if (etapa === 1) return !!titulo.trim()
+    if (etapa === 1) return !!titulo.trim() && (tipo === "nota" || !!arquivo)
     return true
   }
 
@@ -65,7 +74,7 @@ export function ModalCriarMaterialWizard({ pastaId, nomePasta, aberto, onOpenCha
         descricao: descricao.trim() || null,
         tipo_anexo: tipo,
         corpo_texto: tipo === "nota" ? corpo.trim() || null : null,
-        url_objeto: tipo !== "nota" && url.trim() ? url.trim() : null,
+        url_objeto: tipo !== "nota" ? arquivo?.dataUrl ?? null : null,
       })
       toast.success("Material criado!")
       void qc.invalidateQueries({ queryKey: queryKeys.conteudo.materiais(pastaId) })
@@ -126,8 +135,13 @@ export function ModalCriarMaterialWizard({ pastaId, nomePasta, aberto, onOpenCha
             </div>
           ) : (
             <div className="space-y-2">
-              <Label>URL do arquivo</Label>
-              <Input value={url} onChange={(e) => setUrl(e.target.value)} className="rounded-xl" placeholder="https://..." />
+              <Label>Arquivo *</Label>
+              <DropzoneArquivo
+                accept={ACEITE_POR_TIPO[tipo]}
+                arquivo={arquivo}
+                onArquivo={setArquivo}
+                habilitarColar={aberto && etapa === 1}
+              />
             </div>
           )}
         </div>
@@ -138,6 +152,9 @@ export function ModalCriarMaterialWizard({ pastaId, nomePasta, aberto, onOpenCha
           <WizardResumoLinha rotulo="Pasta" valor={nomePasta} />
           <WizardResumoLinha rotulo="Tipo" valor={TIPOS.find((t) => t.value === tipo)?.label ?? tipo} />
           <WizardResumoLinha rotulo="Título" valor={titulo} />
+          {tipo !== "nota" && arquivo && (
+            <WizardResumoLinha rotulo="Arquivo" valor={arquivo.nome} />
+          )}
         </WizardResumo>
       )}
     </ModalWizardShell>

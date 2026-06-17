@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     app_version: str = "2.0.0"
 
+    # IA — Claude Code CLI (modelo para geração de provas)
+    anthropic_api_key: str | None = None
+    # caminho do binário do CLI dentro do container (instalado globalmente via npm)
+    claude_cli_path: str = "claude"
+    # modelo usado pelo CLI; None usa o padrão do CLI
+    claude_model: str | None = None
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

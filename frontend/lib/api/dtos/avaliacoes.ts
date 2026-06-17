@@ -123,6 +123,29 @@ export interface QuestoesBulkReplace {
   questoes: QuestaoUpsert[]
 }
 
+export interface ChatMensagem {
+  id: string
+  papel: "usuario" | "assistente"
+  conteudo: string
+  criado_em?: string | null
+}
+
+export interface IaGerarRequest {
+  mensagem: string
+  material_ids: string[]
+  pasta_ids: string[]
+}
+
+/** Questão emitida pela IA durante o streaming (evento `questao`). */
+export interface IaQuestaoGerada {
+  tipo: TipoQuestao
+  ordem: number
+  enunciado: string
+  alternativas?: string[] | null
+  resposta_correta?: number | null
+  peso?: number
+}
+
 export interface QuestaoOrdemItem {
   id: string
   ordem: number

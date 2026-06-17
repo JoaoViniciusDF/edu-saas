@@ -22,6 +22,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Sparkles,
   Trash2,
   XCircle,
 } from "lucide-react"
@@ -61,6 +62,8 @@ import {
 import { Label } from "@/components/ui/label"
 import { CardPendente } from "@/components/ui/card-pendente"
 import { PainelSubmissoesAvaliacao } from "@/componentes/modulos/painel-submissoes-avaliacao"
+import { ChatIaProva } from "@/componentes/avaliacoes/chat-ia-prova"
+import type { IaQuestaoGerada } from "@/lib/api/dtos/avaliacoes"
 
 export type PendenteUi = {
   key: string
@@ -171,6 +174,10 @@ export function ModuloAvaliacoes({
   const [tituloAvaliacao, setTituloAvaliacao] = React.useState("Nova avaliação")
   const [dataEntrega, setDataEntrega] = React.useState<Date>()
   const [modoEdicao, setModoEdicao] = React.useState(true)
+  const [chatIaAberto, setChatIaAberto] = React.useState(false)
+  // Id de avaliação criada nesta sessão (ex.: ao gerar com IA), para não
+  // sobrescrever as questões locais quando o detalhe recém-criado recarrega.
+  const criadaLocalmenteRef = React.useRef<string | null>(null)
   const [origemUrl, setOrigemUrl] = React.useState("")
   const [pendenciaNovaPasta, setPendenciaNovaPasta] = React.useState<{
     materiaId: string
@@ -209,6 +216,7 @@ export function ModuloAvaliacoes({
       setModoEdicao(true)
       setTituloAvaliacao("Nova avaliação")
       setQuestoes([])
+      setChatIaAberto(true)
       return
     }
 
@@ -216,7 +224,13 @@ export function ModuloAvaliacoes({
     const podeEditar = detalheApi.status === "rascunho"
     setModoEdicao(podeEditar)
     setTituloAvaliacao(detalheApi.titulo)
-    setQuestoes(questoesApiParaUi(detalheApi.questoes))
+    if (criadaLocalmenteRef.current === detalheApi.id) {
+      // Avaliação recém-criada nesta sessão (ex.: gerada pela IA): preserva as
+      // questões já montadas localmente em vez de sobrescrever com o detalhe vazio.
+      criadaLocalmenteRef.current = null
+    } else {
+      setQuestoes(questoesApiParaUi(detalheApi.questoes))
+    }
     if (detalheApi.prazo_utc) setDataEntrega(new Date(detalheApi.prazo_utc))
   }, [avaliacaoId, materiaId, conteudoId, detalheApi])
 
@@ -228,6 +242,7 @@ export function ModuloAvaliacoes({
         titulo: tituloAvaliacao.trim() || "Nova avaliação",
         prazo_utc: dataEntrega?.toISOString(),
       })
+      criadaLocalmenteRef.current = criada.id
       const cor = materiaAtual?.cor ?? "from-blue-500 to-blue-600"
       qc.setQueryData(queryKeys.avaliacoes.detalhe(criada.id), criada)
       upsertAvaliacaoNaArvore(
@@ -451,6 +466,21 @@ export function ModuloAvaliacoes({
     if (!modoEdicao) return
     setQuestoes((prev) => prev.filter((q) => q.id !== id))
   }
+
+  // Recebe uma questão gerada pela IA (via streaming) e a adiciona ao editor
+  // em tempo real, mapeando para o formato local de questão.
+  const adicionarQuestaoIa = React.useCallback((q: IaQuestaoGerada) => {
+    setQuestoes((prev) => [
+      ...prev,
+      {
+        id: `ia-${Date.now()}-${prev.length}`,
+        tipo: q.tipo === "multipla_escolha" ? "multipla-escolha" : "texto-aberto",
+        pergunta: q.enunciado,
+        alternativas: q.alternativas ?? undefined,
+        respostaCorreta: q.resposta_correta ?? undefined,
+      },
+    ])
+  }, [])
 
   const dialogoNovaPasta = (
     <Dialog
@@ -857,6 +887,17 @@ export function ModuloAvaliacoes({
             <CheckCircle2 className="h-4 w-4" />
             Publicar
           </Button>
+          {modoEdicao && (
+            <Button
+              variant={chatIaAberto ? "secondary" : "outline"}
+              size="sm"
+              className="h-10 gap-2 rounded-xl text-xs sm:text-sm"
+              onClick={() => setChatIaAberto((v) => !v)}
+            >
+              <Sparkles className="h-4 w-4" />
+              Criar com IA
+            </Button>
+          )}
           {!modoEdicao && avaliacaoId && avaliacaoId !== "nova" && (
             <>
               <Button
@@ -932,7 +973,7 @@ export function ModuloAvaliacoes({
         </div>
       </div>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ScrollArea className="min-h-0 flex-1">
             <div className="mx-auto max-w-3xl space-y-4 p-4 sm:p-6 lg:p-8">
@@ -1087,6 +1128,14 @@ export function ModuloAvaliacoes({
             </div>
           </ScrollArea>
         </div>
+        {chatIaAberto && modoEdicao && (
+          <ChatIaProva
+            avaliacaoId={avaliacaoId ?? null}
+            garantirAvaliacaoId={garantirAvaliacaoId}
+            onQuestao={adicionarQuestaoIa}
+            onFechar={() => setChatIaAberto(false)}
+          />
+        )}
       </div>
 
       <Dialog open={modalPublicarAberto} onOpenChange={setModalPublicarAberto}>

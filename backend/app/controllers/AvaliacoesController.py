@@ -4,6 +4,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import CurrentUser, DbSession, require_perfis
 from app.models.enums import TipoPerfil
@@ -21,6 +22,8 @@ from app.schemas.avaliacoes import (
     AvaliacaoPatch,
     AvaliacaoPublicar,
     AvaliacaoReabrir,
+    ChatMensagemResponse,
+    IaGerarRequest,
     MateriaCreate,
     MateriaPatch,
     MateriaResponse,
@@ -35,6 +38,7 @@ from app.schemas.avaliacoes import (
     SubmissoesAvaliacaoProfessor,
     SubmissaoResponse,
 )
+from app.services.avaliacao_ia_service import AvaliacaoIaService
 from app.services.avaliacoes_service import AvaliacoesService
 
 router = APIRouter(prefix="/avaliacoes", tags=["Avaliações"])
@@ -340,3 +344,35 @@ def consultar_avaliacao_dependente(
     aluno_id: uuid.UUID = Query(...),
 ) -> AlunoAvaliacaoView:
     return _svc(db).responsavel_get_avaliacao_dependente(user, avaliacao_id, aluno_id)
+
+
+# --------------------------------------------------------------------------- #
+# IA — geração de provas via chat (Claude Code CLI), com streaming SSE
+# --------------------------------------------------------------------------- #
+@router.get(
+    "/consultar-chat-ia/{avaliacao_id}",
+    response_model=list[ChatMensagemResponse],
+)
+def consultar_chat_ia(
+    avaliacao_id: uuid.UUID, user: DocenteUser, db: DbSession
+) -> list[ChatMensagemResponse]:
+    return AvaliacaoIaService(db).historico(user, avaliacao_id)
+
+
+@router.post("/gerar-ia/{avaliacao_id}")
+async def gerar_ia(
+    avaliacao_id: uuid.UUID,
+    body: IaGerarRequest,
+    user: DocenteUser,
+    db: DbSession,
+) -> StreamingResponse:
+    gerador = AvaliacaoIaService(db).gerar_stream(user, avaliacao_id, body)
+    return StreamingResponse(
+        gerador,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
