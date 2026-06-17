@@ -1067,7 +1067,9 @@ class AvaliacoesService:
             )
         )
         if existing:
-            raise conflict("Submissão já existe")
+            # Idempotente: devolve a submissão já existente deste aluno em vez de
+            # falhar, evitando que o cliente fique com um id de submissão órfão.
+            return self._submissao_response(existing)
         sub = Submissao(
             avaliacao_id=avaliacao_id,
             aluno_id=user.aluno_id,

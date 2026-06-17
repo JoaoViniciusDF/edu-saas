@@ -114,12 +114,24 @@ class Avaliacao(UUIDPrimaryKeyMixin, TimestampsMixin, Base):
 
     pasta: Mapped["PastaAvaliacoes"] = relationship(back_populates="avaliacoes")
     turma: Mapped["Turma"] = relationship()
+    # FKs filhas usam ON DELETE CASCADE no banco; passive_deletes deixa o
+    # Postgres remover os filhos ao apagar a avaliação, evitando que o ORM
+    # tente setar avaliacao_id = NULL (que viola a constraint NOT NULL).
     questoes: Mapped[list["Questao"]] = relationship(
-        back_populates="avaliacao", order_by="Questao.ordem"
+        back_populates="avaliacao",
+        order_by="Questao.ordem",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
-    submissoes: Mapped[list["Submissao"]] = relationship(back_populates="avaliacao")
+    submissoes: Mapped[list["Submissao"]] = relationship(
+        back_populates="avaliacao",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     mensagens_chat: Mapped[list["AvaliacaoChatMensagem"]] = relationship(
-        back_populates="avaliacao"
+        back_populates="avaliacao",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 

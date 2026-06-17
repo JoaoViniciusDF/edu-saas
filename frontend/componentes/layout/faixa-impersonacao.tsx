@@ -1,6 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
 import { LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/componentes/provedores/provedor-auth"
@@ -17,11 +18,15 @@ const LABEL_PERFIL: Record<string, string> = {
 export function FaixaImpersonacao() {
   const { usuario, recarregar } = useAuth()
   const router = useRouter()
+  const queryClient = useQueryClient()
 
   if (!usuario?.impersonador) return null
 
   const voltar = async () => {
     await authRequests.restaurarSessaoAdmin()
+    // Descarta todo o cache da sessão anterior para não vazar dados
+    // (ex.: submissões) entre identidades ao trocar de sessão.
+    queryClient.clear()
     await recarregar()
     const instId = sessionStorage.getItem("edu_impersonacao_instituicao_id")
     router.push(instId ? `/super-admin/instituicoes/${instId}` : "/super-admin")

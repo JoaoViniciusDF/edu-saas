@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import CurrentUser
 from app.core.exceptions import bad_request, forbidden
-from app.models.analytics import DashboardFatoDesempenho
 from app.models.avaliacoes import (
     Assunto,
     Avaliacao,
@@ -25,7 +24,7 @@ from app.models.enums import (
     StatusSubmissao,
     TipoPerfil,
 )
-from app.models.governanca import Aluno, AlunoResponsavel, Matricula, Turma, TurmaProfessor, UsuarioConta
+from app.models.governanca import Aluno, AlunoResponsavel, Matricula, Turma, TurmaProfessor
 from app.schemas.dashboard import (
     DashboardDesempenhoAvaliacoesResponse,
     DashboardResumo,
@@ -37,6 +36,9 @@ from app.schemas.dashboard import (
     NotificacaoItem,
     SearchHit,
 )
+
+
+APROVACAO_MINIMA = Decimal("6")
 
 
 class DashboardService:
@@ -85,6 +87,126 @@ class DashboardService:
             raise forbidden("Turma fora do seu escopo")
         return turma_id
 
+    def _resolver_escopo(
+        self,
+        user: CurrentUser,
+        escopo: str | None,
+        turma_id: uuid.UUID | None,
+        aluno_id: uuid.UUID | None,
+    ) -> tuple[uuid.UUID | None, uuid.UUID | None, list[uuid.UUID] | None]:
+        """Resolve escopo/perfil em (turma_id, aluno_id, lista de alunos do escopo).
+
+        ``aluno_ids_filtro`` é ``None`` quando não há restrição por aluno
+        (admin/professor em escopo amplo) e uma lista (possivelmente vazia)
+        quando o escopo limita os alunos visíveis.
+        """
+        turma_id, aluno_id = self._filtros_por_escopo(escopo, turma_id, aluno_id)
+        turma_id = self._validar_turma_professor(user, turma_id)
+
+        aluno_ids_filtro: list[uuid.UUID] | None = None
+        if aluno_id:
+            aluno_ids_filtro = [aluno_id]
+        elif user.perfil == TipoPerfil.responsavel and user.responsavel_id:
+            aluno_ids_filtro = list(
+                self.db.scalars(
+                    select(AlunoResponsavel.aluno_id).where(
+                        AlunoResponsavel.responsavel_id == user.responsavel_id
+                    )
+                ).all()
+            )
+        elif turma_id:
+            aluno_ids_filtro = list(
+                self.db.scalars(
+                    select(Matricula.aluno_id).where(
+                        Matricula.turma_id == turma_id,
+                        Matricula.situacao == SituacaoMatricula.ativa,
+                    )
+                ).all()
+            )
+        return turma_id, aluno_id, aluno_ids_filtro
+
+    def _turma_ids_escopo(
+        self,
+        user: CurrentUser,
+        turma_id: uuid.UUID | None,
+        aluno_ids_filtro: list[uuid.UUID] | None,
+    ) -> list[uuid.UUID] | None:
+        """Turmas relevantes ao escopo. ``None`` significa "todas da instituição"."""
+        if turma_id:
+            return [turma_id]
+        if aluno_ids_filtro is not None:
+            if not aluno_ids_filtro:
+                return []
+            return list(
+                self.db.scalars(
+                    select(Matricula.turma_id)
+                    .where(
+                        Matricula.aluno_id.in_(aluno_ids_filtro),
+                        Matricula.situacao == SituacaoMatricula.ativa,
+                    )
+                    .distinct()
+                ).all()
+            )
+        if user.perfil == TipoPerfil.professor:
+            return self._professor_turma_ids(user)
+        return None
+
+    def _filtrar_submissoes(
+        self,
+        stmt,
+        user: CurrentUser,
+        inst_id: uuid.UUID | None,
+        turma_id: uuid.UUID | None,
+        aluno_ids_filtro: list[uuid.UUID] | None,
+        data_inicio: date | None,
+        data_fim: date | None,
+    ):
+        """Aplica filtros de instituição/turma/aluno/período a uma query que já
+        possui ``Submissao`` e ``Avaliacao`` no join."""
+        stmt = stmt.join(Turma, Avaliacao.turma_id == Turma.id)
+        if inst_id:
+            stmt = stmt.where(Turma.instituicao_id == inst_id)
+        if turma_id:
+            stmt = stmt.where(Avaliacao.turma_id == turma_id)
+        if aluno_ids_filtro is not None:
+            stmt = stmt.where(Submissao.aluno_id.in_(aluno_ids_filtro))
+        elif user.perfil == TipoPerfil.professor:
+            prof_turmas = self._professor_turma_ids(user)
+            if prof_turmas:
+                stmt = stmt.where(Avaliacao.turma_id.in_(prof_turmas))
+        if data_inicio:
+            stmt = stmt.where(
+                func.coalesce(Submissao.enviada_em, Submissao.iniciada_em)
+                >= datetime.combine(data_inicio, datetime.min.time())
+            )
+        if data_fim:
+            stmt = stmt.where(
+                func.coalesce(Submissao.enviada_em, Submissao.iniciada_em)
+                <= datetime.combine(data_fim, datetime.max.time())
+            )
+        return stmt
+
+    def _contar_alunos_escopo(
+        self,
+        inst_id: uuid.UUID | None,
+        turma_ids_escopo: list[uuid.UUID] | None,
+        aluno_ids_filtro: list[uuid.UUID] | None,
+    ) -> int:
+        if aluno_ids_filtro is not None:
+            return len(set(aluno_ids_filtro))
+        q = (
+            select(func.count(func.distinct(Matricula.aluno_id)))
+            .join(Turma, Matricula.turma_id == Turma.id)
+            .where(Matricula.situacao == SituacaoMatricula.ativa)
+        )
+        if inst_id:
+            q = q.where(Turma.instituicao_id == inst_id)
+        if turma_ids_escopo is not None:
+            if not turma_ids_escopo:
+                return 0
+            q = q.where(Matricula.turma_id.in_(turma_ids_escopo))
+        return self.db.scalar(q) or 0
+
     def _nome_disciplina(self, disciplina_id: uuid.UUID | None) -> str:
         if not disciplina_id:
             return "Geral"
@@ -106,69 +228,70 @@ class DashboardService:
         if not inst_id and user.perfil != TipoPerfil.super_admin:
             raise forbidden()
 
-        turma_id, aluno_id = self._filtros_por_escopo(escopo, turma_id, aluno_id)
-        turma_id = self._validar_turma_professor(user, turma_id)
+        turma_id, _aluno_id, aluno_ids_filtro = self._resolver_escopo(
+            user, escopo, turma_id, aluno_id
+        )
 
-        stmt = select(DashboardFatoDesempenho)
-        if inst_id:
-            stmt = stmt.where(DashboardFatoDesempenho.instituicao_id == inst_id)
-        if turma_id:
-            stmt = stmt.where(DashboardFatoDesempenho.turma_id == turma_id)
-        if aluno_id:
-            stmt = stmt.where(DashboardFatoDesempenho.aluno_id == aluno_id)
-        if data_inicio:
-            stmt = stmt.where(DashboardFatoDesempenho.periodo_referencia >= data_inicio)
-        if data_fim:
-            stmt = stmt.where(DashboardFatoDesempenho.periodo_referencia <= data_fim)
-
-        if user.perfil == TipoPerfil.responsavel and user.responsavel_id:
-            aluno_ids = select(AlunoResponsavel.aluno_id).where(
-                AlunoResponsavel.responsavel_id == user.responsavel_id
+        # Média/taxa calculadas a partir das notas reais das submissões corrigidas.
+        notas_stmt = (
+            select(Submissao.nota_decimal, Submissao.aluno_id)
+            .join(Avaliacao, Submissao.avaliacao_id == Avaliacao.id)
+            .where(
+                Submissao.status.in_(
+                    (
+                        StatusSubmissao.corrigida,
+                        StatusSubmissao.corrigida_parcialmente,
+                    )
+                ),
+                Submissao.nota_decimal.isnot(None),
+                Avaliacao.status.in_(
+                    (StatusAvaliacao.publicada, StatusAvaliacao.encerrada)
+                ),
             )
-            stmt = stmt.where(DashboardFatoDesempenho.aluno_id.in_(aluno_ids))
-        elif user.perfil == TipoPerfil.professor:
-            prof_turmas = self._professor_turma_ids(user)
-            if prof_turmas:
-                stmt = stmt.where(DashboardFatoDesempenho.turma_id.in_(prof_turmas))
+        )
+        notas_stmt = self._filtrar_submissoes(
+            notas_stmt, user, inst_id, turma_id, aluno_ids_filtro, data_inicio, data_fim
+        )
+        rows = self.db.execute(notas_stmt).all()
+        notas = [n for n, _ in rows if n is not None]
 
-        fatos = list(self.db.scalars(stmt).all())
-        media = None
-        taxa = None
-        if fatos:
-            medias = [f.media for f in fatos if f.media is not None]
-            taxas = [f.taxa_aprovacao for f in fatos if f.taxa_aprovacao is not None]
-            if medias:
-                media = sum(medias, Decimal("0")) / len(medias)
-            if taxas:
-                taxa = sum(taxas, Decimal("0")) / len(taxas)
+        media: Decimal | None = None
+        taxa: Decimal | None = None
+        if notas:
+            media = sum(notas, Decimal("0")) / len(notas)
+            aprovados = sum(1 for n in notas if n >= APROVACAO_MINIMA)
+            taxa = Decimal(aprovados) / Decimal(len(notas))
 
+        # Submissões enviadas e ainda não corrigidas (pendências reais).
         pend_stmt = (
             select(func.count())
             .select_from(Submissao)
             .join(Avaliacao, Submissao.avaliacao_id == Avaliacao.id)
             .where(Submissao.status == StatusSubmissao.enviada)
         )
-        if user.perfil == TipoPerfil.professor:
-            prof_turmas = self._professor_turma_ids(user)
-            if prof_turmas:
-                pend_stmt = pend_stmt.where(Avaliacao.turma_id.in_(prof_turmas))
-            if turma_id:
-                pend_stmt = pend_stmt.where(Avaliacao.turma_id == turma_id)
-        elif turma_id:
-            pend_stmt = pend_stmt.where(Avaliacao.turma_id == turma_id)
+        pend_stmt = self._filtrar_submissoes(
+            pend_stmt, user, inst_id, turma_id, aluno_ids_filtro, data_inicio, data_fim
+        )
         pendentes = self.db.scalar(pend_stmt) or 0
+
+        turma_ids_escopo = self._turma_ids_escopo(user, turma_id, aluno_ids_filtro)
+        total_alunos = self._contar_alunos_escopo(
+            inst_id, turma_ids_escopo, aluno_ids_filtro
+        )
 
         insights: list[str] = []
         if pendentes:
             insights.append(f"{pendentes} submissões aguardando correção")
         if media is not None:
             insights.append(f"Média geral no período: {media:.2f}")
+        else:
+            insights.append("Nenhuma avaliação corrigida no período")
 
         return DashboardResumo(
             media_geral=media,
             taxa_aprovacao=taxa,
             pendentes_correcao=pendentes,
-            total_alunos_escopo=len({f.aluno_id for f in fatos if f.aluno_id}),
+            total_alunos_escopo=total_alunos,
             insights=insights,
         )
 
@@ -183,81 +306,59 @@ class DashboardService:
     ) -> DashboardSeriesResponse:
         if user.perfil == TipoPerfil.aluno:
             raise forbidden()
-
-        turma_id, aluno_id = self._filtros_por_escopo(escopo, turma_id, aluno_id)
-        turma_id = self._validar_turma_professor(user, turma_id)
-
-        stmt = select(DashboardFatoDesempenho)
         inst_id = user.instituicao_id
-        if inst_id:
-            stmt = stmt.where(DashboardFatoDesempenho.instituicao_id == inst_id)
-        if turma_id:
-            stmt = stmt.where(DashboardFatoDesempenho.turma_id == turma_id)
-        if aluno_id:
-            stmt = stmt.where(DashboardFatoDesempenho.aluno_id == aluno_id)
-        if data_inicio:
-            stmt = stmt.where(DashboardFatoDesempenho.periodo_referencia >= data_inicio)
-        if data_fim:
-            stmt = stmt.where(DashboardFatoDesempenho.periodo_referencia <= data_fim)
+        if not inst_id and user.perfil != TipoPerfil.super_admin:
+            raise forbidden()
 
-        if user.perfil == TipoPerfil.responsavel and user.responsavel_id:
-            aluno_ids = select(AlunoResponsavel.aluno_id).where(
-                AlunoResponsavel.responsavel_id == user.responsavel_id
+        turma_id, _aluno_id, aluno_ids_filtro = self._resolver_escopo(
+            user, escopo, turma_id, aluno_id
+        )
+
+        # Evolução mensal real, agrupada por (mês, matéria) das submissões corrigidas.
+        stmt = (
+            select(Submissao, Avaliacao, MateriaCurricular)
+            .join(Avaliacao, Submissao.avaliacao_id == Avaliacao.id)
+            .join(PastaAvaliacoes, Avaliacao.pasta_id == PastaAvaliacoes.id)
+            .join(Assunto, PastaAvaliacoes.assunto_id == Assunto.id)
+            .join(MateriaCurricular, Assunto.materia_id == MateriaCurricular.id)
+            .where(
+                Submissao.status.in_(
+                    (
+                        StatusSubmissao.corrigida,
+                        StatusSubmissao.corrigida_parcialmente,
+                    )
+                ),
+                Submissao.nota_decimal.isnot(None),
+                Avaliacao.status.in_(
+                    (StatusAvaliacao.publicada, StatusAvaliacao.encerrada)
+                ),
             )
-            stmt = stmt.where(DashboardFatoDesempenho.aluno_id.in_(aluno_ids))
-        elif user.perfil == TipoPerfil.professor:
-            prof_turmas = self._professor_turma_ids(user)
-            if prof_turmas:
-                stmt = stmt.where(DashboardFatoDesempenho.turma_id.in_(prof_turmas))
+        )
+        stmt = self._filtrar_submissoes(
+            stmt, user, inst_id, turma_id, aluno_ids_filtro, data_inicio, data_fim
+        )
+        rows = self.db.execute(stmt).all()
 
-        fatos = list(self.db.scalars(stmt.order_by(DashboardFatoDesempenho.periodo_referencia)).all())
-
-        turma_ids = {f.turma_id for f in fatos if f.turma_id}
-        aluno_ids = {f.aluno_id for f in fatos if f.aluno_id}
-        disciplina_ids = {f.disciplina_id for f in fatos if f.disciplina_id}
-
-        turmas_nome: dict[uuid.UUID, str] = {}
-        if turma_ids:
-            for tid, nome in self.db.execute(
-                select(Turma.id, Turma.nome).where(Turma.id.in_(turma_ids))
-            ).all():
-                turmas_nome[tid] = nome
-
-        alunos_nome: dict[uuid.UUID, str] = {}
-        if aluno_ids:
-            for aid, nome in self.db.execute(
-                select(Aluno.id, UsuarioConta.nome_exibicao)
-                .join(UsuarioConta, UsuarioConta.id == Aluno.usuario_id)
-                .where(Aluno.id.in_(aluno_ids))
-            ).all():
-                alunos_nome[aid] = nome
-
-        disciplinas_nome: dict[uuid.UUID, str] = {}
-        if disciplina_ids:
-            for did, nome in self.db.execute(
-                select(MateriaCurricular.id, MateriaCurricular.nome).where(
-                    MateriaCurricular.id.in_(disciplina_ids)
-                )
-            ).all():
-                disciplinas_nome[did] = nome
+        grupos: dict[tuple[date, uuid.UUID], dict] = {}
+        for sub, _av, materia in rows:
+            ref = sub.enviada_em or sub.iniciada_em
+            periodo = date(ref.year, ref.month, 1)
+            chave = (periodo, materia.id)
+            grupo = grupos.setdefault(
+                chave,
+                {"periodo": periodo, "materia": materia.nome, "notas": []},
+            )
+            grupo["notas"].append(sub.nota_decimal)
 
         items: list[DashboardSerieItem] = []
-        for f in fatos:
+        for grupo in sorted(grupos.values(), key=lambda g: (g["periodo"], g["materia"])):
+            notas = grupo["notas"]
+            media = sum(notas, Decimal("0")) / len(notas)
             items.append(
                 DashboardSerieItem(
-                    periodo=f.periodo_referencia,
-                    turma_id=f.turma_id,
-                    turma_nome=turmas_nome.get(f.turma_id) if f.turma_id else None,
-                    aluno_id=f.aluno_id,
-                    aluno_nome=alunos_nome.get(f.aluno_id) if f.aluno_id else None,
-                    disciplina=(
-                        disciplinas_nome.get(f.disciplina_id)
-                        if f.disciplina_id
-                        else "Geral"
-                    ),
-                    media=f.media,
-                    taxa_aprovacao=f.taxa_aprovacao,
-                    pendentes_correcao=f.pendentes_correcao,
+                    periodo=grupo["periodo"],
+                    disciplina=grupo["materia"],
+                    media=media,
                 )
             )
         return DashboardSeriesResponse(items=items)
@@ -401,29 +502,9 @@ class DashboardService:
         if not inst_id and user.perfil != TipoPerfil.super_admin:
             raise forbidden()
 
-        turma_id, aluno_id = self._filtros_por_escopo(escopo, turma_id, aluno_id)
-        turma_id = self._validar_turma_professor(user, turma_id)
-
-        aluno_ids_filtro: list[uuid.UUID] | None = None
-        if aluno_id:
-            aluno_ids_filtro = [aluno_id]
-        elif user.perfil == TipoPerfil.responsavel and user.responsavel_id:
-            aluno_ids_filtro = list(
-                self.db.scalars(
-                    select(AlunoResponsavel.aluno_id).where(
-                        AlunoResponsavel.responsavel_id == user.responsavel_id
-                    )
-                ).all()
-            )
-        elif turma_id:
-            aluno_ids_filtro = list(
-                self.db.scalars(
-                    select(Matricula.aluno_id).where(
-                        Matricula.turma_id == turma_id,
-                        Matricula.situacao == SituacaoMatricula.ativa,
-                    )
-                ).all()
-            )
+        turma_id, aluno_id, aluno_ids_filtro = self._resolver_escopo(
+            user, escopo, turma_id, aluno_id
+        )
 
         stmt = (
             select(Submissao, Avaliacao, MateriaCurricular, Assunto)
@@ -512,6 +593,58 @@ class DashboardService:
             assuntos[assunto.id]["avaliacoes"].append(item)
             if pct is not None:
                 assuntos[assunto.id]["percentuais"].append(pct)
+
+        # Inclui matérias/assuntos com avaliações no escopo mesmo sem nota,
+        # para que apareçam no gráfico "Desempenho por matéria" com média 0.
+        turma_ids_escopo = self._turma_ids_escopo(user, turma_id, aluno_ids_filtro)
+        av_stmt = (
+            select(MateriaCurricular, Assunto, Avaliacao)
+            .join(Assunto, Assunto.materia_id == MateriaCurricular.id)
+            .join(PastaAvaliacoes, PastaAvaliacoes.assunto_id == Assunto.id)
+            .join(Avaliacao, Avaliacao.pasta_id == PastaAvaliacoes.id)
+            .where(
+                Avaliacao.status.in_(
+                    (StatusAvaliacao.publicada, StatusAvaliacao.encerrada)
+                )
+            )
+        )
+        if inst_id:
+            av_stmt = av_stmt.where(MateriaCurricular.instituicao_id == inst_id)
+        if turma_ids_escopo is not None:
+            if turma_ids_escopo:
+                av_stmt = av_stmt.where(Avaliacao.turma_id.in_(turma_ids_escopo))
+            else:
+                av_stmt = av_stmt.where(False)
+        for materia, assunto, av in self.db.execute(av_stmt).all():
+            materia_data = materias_map.setdefault(
+                materia.id,
+                {"id": materia.id, "nome": materia.nome, "assuntos": {}},
+            )
+            assunto_data = materia_data["assuntos"].setdefault(
+                assunto.id,
+                {
+                    "id": assunto.id,
+                    "nome": assunto.nome,
+                    "avaliacoes": [],
+                    "percentuais": [],
+                },
+            )
+            # Para a visão de um único aluno, lista as avaliações ainda não
+            # entregues como pendentes (sem nota).
+            if aluno_id and not any(
+                item.id == av.id for item in assunto_data["avaliacoes"]
+            ):
+                assunto_data["avaliacoes"].append(
+                    DesempenhoAvaliacaoItem(
+                        id=av.id,
+                        titulo=av.titulo,
+                        percentual=None,
+                        nota_decimal=None,
+                        situacao="pendente",
+                        enviada_em=None,
+                        aluno_nome=None,
+                    )
+                )
 
         materias_out: list[DesempenhoMateriaItem] = []
         for m_data in sorted(materias_map.values(), key=lambda x: x["nome"]):

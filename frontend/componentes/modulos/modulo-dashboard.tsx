@@ -244,20 +244,18 @@ export function ModuloDashboard() {
       }))
   }, [series])
 
-  const dadosDisciplinas = React.useMemo(() => {
-    const mapa = new Map<string, { soma: number; count: number }>()
-    series.forEach((item) => {
-      const disc = item.disciplina ?? "geral"
-      if (!mapa.has(disc)) mapa.set(disc, { soma: 0, count: 0 })
-      const a = mapa.get(disc)!
-      a.soma += num(item.media)
-      a.count += 1
-    })
-    return Array.from(mapa.entries()).map(([disciplina, v]) => ({
-      disciplina: disciplina.length > 24 ? `${disciplina.slice(0, 22)}…` : disciplina,
-      nota: Number((v.soma / Math.max(1, v.count)).toFixed(2)),
+  // Desempenho por matéria a partir das matérias reais das avaliações.
+  // media_percentual (0-100) é convertida para nota (0-10); matéria sem nota = 0.
+  const dadosMaterias = React.useMemo(() => {
+    const materias = desempenhoAv?.materias ?? []
+    return materias.map((m) => ({
+      disciplina: m.nome.length > 24 ? `${m.nome.slice(0, 22)}…` : m.nome,
+      nota:
+        m.media_percentual != null
+          ? Number((m.media_percentual / 10).toFixed(2))
+          : 0,
     }))
-  }, [series])
+  }, [desempenhoAv])
 
   const domainMedia = React.useMemo(() => {
     const vals = dadosDesempenhoTempo.map((d) => d.media).filter((v) => v > 0)
@@ -465,16 +463,20 @@ export function ModuloDashboard() {
 
         <Card className="rounded-2xl border-border/50 bg-card/80 backdrop-blur-sm">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg font-semibold">Desempenho por disciplina</CardTitle>
-            <CardDescription>Notas por disciplina no periodo selecionado</CardDescription>
+            <CardTitle className="text-lg font-semibold">Desempenho por materia</CardTitle>
+            <CardDescription>Nota media por materia das avaliacoes no periodo</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[280px] sm:h-[320px]">
-              {loadingSeries ? (
+              {loadingDesempenhoAv ? (
                 <Skeleton className="h-full w-full rounded-xl" />
+              ) : dadosMaterias.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  Nenhuma materia com avaliacoes no escopo selecionado.
+                </div>
               ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dadosDisciplinas} layout="vertical" barGap={4}>
+                <BarChart data={dadosMaterias} layout="vertical" barGap={4}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" horizontal vertical={false} />
                   <XAxis type="number" domain={[0, 10]} className="text-xs" tick={{ fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
                   <YAxis dataKey="disciplina" type="category" className="text-xs" tick={{ fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} width={90} />
@@ -488,8 +490,8 @@ export function ModuloDashboard() {
                     labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
                   />
                   <Legend wrapperStyle={{ paddingTop: "20px" }} formatter={(value) => <span className="text-sm text-muted-foreground">{value}</span>} />
-                  <Bar dataKey="nota" radius={[0, 6, 6, 0]} name="Nota atual">
-                    {dadosDisciplinas.map((_, index) => (
+                  <Bar dataKey="nota" radius={[0, 6, 6, 0]} name="Nota media">
+                    {dadosMaterias.map((_, index) => (
                       <Cell key={index} fill={CORES_GRAFICO[index % CORES_GRAFICO.length]} />
                     ))}
                   </Bar>

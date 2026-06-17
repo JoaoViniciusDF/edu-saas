@@ -16,6 +16,7 @@ import { VisualizadorGabarito } from "@/componentes/aluno/visualizador-gabarito"
 import { NavegacaoPaginas } from "@/componentes/shared/navegacao-paginas"
 import type { DocumentoJson } from "@/lib/avaliacoes/documento"
 import type { AlunoAvaliacaoView, SubmissaoResponse } from "@/lib/api/dtos/avaliacoes"
+import { ApiError } from "@/lib/api/errors"
 
 const MSG_SAIR =
   "Você precisa finalizar e enviar a prova antes de sair desta página."
@@ -71,6 +72,11 @@ export function ResolverProva({
   React.useEffect(() => {
     setPaginaQuestao(0)
     iniciouSubmissaoRef.current = false
+    // Troca de prova (ou de aluno impersonado) zera o estado local para não
+    // reaproveitar a submissão de outra avaliação/aluno.
+    setSubmissaoId(null)
+    setRespostas({})
+    setResultadoEnvio(null)
   }, [avaliacaoId])
 
   React.useEffect(() => {
@@ -108,27 +114,45 @@ export function ResolverProva({
     return () => window.removeEventListener("beforeunload", onBeforeUnload)
   }, [emProva])
 
-  const garantirSubmissao = async () => {
+  // Cria (ou recupera, pois o backend é idempotente) a submissão deste aluno.
+  // `forcar` ignora o id em memória — usado para se recuperar de um id obsoleto
+  // que resultaria em 404.
+  const garantirSubmissao = async (forcar = false): Promise<string | null> => {
     if (somenteLeitura) return null
-    if (submissaoId) return submissaoId
+    if (submissaoId && !forcar) return submissaoId
     const { alunoAvaliacoesRequests } = await import("@/lib/api/requests/avaliacoes")
     const sub = await alunoAvaliacoesRequests.createSubmissao(avaliacaoId)
     setSubmissaoId(sub.id)
     return sub.id
   }
 
-  const salvarRespostas = async () => {
-    if (somenteLeitura || !view) return
+  const corpoRespostas = () => ({
+    respostas: (view?.questoes ?? []).map((q) => ({
+      questao_id: q.id,
+      valor_texto: respostas[q.id]?.texto ?? null,
+      indice_selecionado: respostas[q.id]?.indice ?? null,
+    })),
+  })
+
+  const salvarRespostas = async (): Promise<string | null> => {
+    if (somenteLeitura || !view) return null
     const { alunoAvaliacoesRequests } = await import("@/lib/api/requests/avaliacoes")
-    const sid = await garantirSubmissao()
-    if (!sid) return
-    await alunoAvaliacoesRequests.patchSubmissao(sid, {
-      respostas: view.questoes.map((q) => ({
-        questao_id: q.id,
-        valor_texto: respostas[q.id]?.texto ?? null,
-        indice_selecionado: respostas[q.id]?.indice ?? null,
-      })),
-    })
+    const corpo = corpoRespostas()
+    let sid = await garantirSubmissao()
+    if (!sid) return null
+    try {
+      await alunoAvaliacoesRequests.patchSubmissao(sid, corpo)
+    } catch (e) {
+      // Id de submissão obsoleto (ex.: cache de outra sessão): recria e tenta de novo.
+      if (e instanceof ApiError && e.status === 404) {
+        sid = await garantirSubmissao(true)
+        if (!sid) return null
+        await alunoAvaliacoesRequests.patchSubmissao(sid, corpo)
+      } else {
+        throw e
+      }
+    }
+    return sid
   }
 
   const enviar = async () => {
@@ -136,11 +160,22 @@ export function ResolverProva({
     setEnviando(true)
     try {
       const { alunoAvaliacoesRequests } = await import("@/lib/api/requests/avaliacoes")
-      await salvarRespostas()
-      const sid = submissaoId ?? (await garantirSubmissao())
+      let sid = (await salvarRespostas()) ?? (await garantirSubmissao())
       if (!sid) return
-      const res = await alunoAvaliacoesRequests.enviarSubmissao(sid)
-      setResultadoEnvio(res)
+      try {
+        const res = await alunoAvaliacoesRequests.enviarSubmissao(sid)
+        setResultadoEnvio(res)
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          sid = await garantirSubmissao(true)
+          if (!sid) return
+          await alunoAvaliacoesRequests.patchSubmissao(sid, corpoRespostas())
+          const res = await alunoAvaliacoesRequests.enviarSubmissao(sid)
+          setResultadoEnvio(res)
+        } else {
+          throw e
+        }
+      }
     } finally {
       setEnviando(false)
     }

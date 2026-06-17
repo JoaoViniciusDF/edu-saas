@@ -146,6 +146,9 @@ export function DetalheUsuarioView({ usuarioId }: Props) {
       sessionStorage.setItem("edu_impersonacao_instituicao_id", data.instituicao.id)
     }
     await authRequests.assumirSessao(data.usuario_id)
+    // Limpa o cache para que a nova identidade não reaproveite dados
+    // (views de prova, submissões, etc.) carregados pela sessão anterior.
+    queryClient.clear()
     await recarregar()
     router.push(ROTA_HOME_POR_PERFIL[data.tipo_perfil])
   }

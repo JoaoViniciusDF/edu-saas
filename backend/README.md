@@ -22,13 +22,13 @@ docker compose down -v
 docker compose up --build
 ```
 
-Na **primeira execução** (ou após mudanças de migration), rode migrations manualmente:
+O container backend roda `alembic upgrade head` automaticamente antes de subir o uvicorn (ver `command:` no `docker-compose.yml`), então o schema e os dados demo são criados no primeiro startup. O upgrade é idempotente e seguro a cada restart.
+
+Para aplicar migrations manualmente (ex.: dev local fora do Docker):
 
 ```bash
 docker compose exec backend alembic upgrade head
 ```
-
-O container sobe apenas o uvicorn com `--reload` (sem rodar Alembic a cada restart).
 
 ### Dev rápido no Windows
 
@@ -50,21 +50,46 @@ Se usar o frontend no Docker com bind mount no Windows e o HMR falhar, defina `F
 - Base REST: http://localhost:8000 (ex.: `/configuracoes/autenticar`)
 - Postgres (DBeaver/host): `localhost:5434` — usuário/senha/banco `edusaas`
 
-## Bootstrap demo
+## Bootstrap demo — usuários, emails e senhas
 
-Executado via migration Alembic `002`. Senha padrão: **admin123**
+Os usuários demo são criados pela migration Alembic `002` (que chama `scripts/demo_bootstrap.py`).
+**A senha é a mesma para TODOS os usuários: `admin123`** (constante `DEMO_PASSWORD`).
 
 Para re-sincronizar dados demo sem recriar o volume: `python -m scripts.seed`
 
-| Email | Perfil |
-|-------|--------|
-| admin@edu.com.br | super_admin (login principal da plataforma) |
-| gestor@edu.com.br | administrador (Escola Demo Edu) |
-| professor@edu.com.br | professor |
-| professor2@edu.com.br | professor |
-| aluno@edu.com.br | aluno |
-| aluno2@edu.com.br | aluno |
-| responsavel@edu.com.br | responsavel |
+| Email | Senha | Perfil | Nome de exibição | Acesso |
+|-------|-------|--------|------------------|--------|
+| admin@edu.com.br | admin123 | super_admin | Admin Plataforma Edu | `/super-admin` (login principal da plataforma) |
+| gestor@edu.com.br | admin123 | administrador | Gestor da Escola | `/configuracoes` (Escola Demo Edu) |
+| professor@edu.com.br | admin123 | professor | Prof. Maria Silva | `/conteudo`, `/avaliacoes` (Matemática, Ciências) |
+| professor2@edu.com.br | admin123 | professor | Prof. João Santos | `/conteudo` (Português) |
+| aluno@edu.com.br | admin123 | aluno | Pedro Aluno | `/aluno/provas` (turma 3º Ano A) |
+| aluno2@edu.com.br | admin123 | aluno | Ana Aluna | `/aluno/provas` (turma 3º Ano A) |
+| responsavel@edu.com.br | admin123 | responsavel | Carla Responsável | `/dashboard` (responsável de aluno@edu.com.br) |
+
+> **Atenção:** o `admin@edu.com.br` (super_admin) é o único usuário **sem instituição** (`instituicao_id = NULL`); os demais pertencem à **Escola Demo Edu**.
+
+## Troubleshooting — login retorna 500 (`relation "usuario_conta" does not exist`)
+
+Se o login falhar com erro 500 e o log mostrar:
+
+```
+psycopg.errors.UndefinedTable: relation "usuario_conta" does not exist
+```
+
+o banco está **sem schema** — as migrations Alembic não foram aplicadas. Desde a correção no `docker-compose.yml`, o backend roda `alembic upgrade head` automaticamente no startup; se ainda assim ocorrer, aplique manualmente:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+Se persistir (volume em estado inconsistente), recrie do zero:
+
+```bash
+docker compose down -v
+docker compose up --build
+docker compose exec backend alembic upgrade head
+```
 
 Instituição de teste: **Escola Demo Edu** — turma 3º Ano A, matérias (Matemática, Português, Ciências) com assuntos, materiais de conteúdo e comunicado de exemplo. **Avaliações não são pré-criadas** — crie-as pela UI em `/avaliacoes` para testar provas.
 

@@ -338,39 +338,56 @@ export function ModuloAvaliacoes({
     }
   }
 
+  // Atualiza a árvore/detalhe após uma ação. É best-effort: se o refetch
+  // falhar, a ação (que já foi confirmada pelo backend) NÃO deve ser reportada
+  // como erro — apenas atualizamos o cache quando possível.
+  const atualizarCacheAvaliacao = async (id: string) => {
+    try {
+      if (materiaId) await invalidarArvore(materiaId)
+      await qc.invalidateQueries({ queryKey: queryKeys.avaliacoes.detalhe(id) })
+    } catch {
+      /* refetch de cache falhou; ação já concluída no servidor */
+    }
+  }
+
   const encerrarAvaliacao = async (id: string) => {
     try {
       await avaliacoesRequests.encerrar(id)
-      if (materiaId) await invalidarArvore(materiaId)
-      await qc.invalidateQueries({ queryKey: queryKeys.avaliacoes.detalhe(id) })
-      setModoEdicao(false)
-      toast.success("Avaliação encerrada")
     } catch (e: unknown) {
       toast.error(e instanceof ApiError ? e.message : "Erro ao encerrar")
+      return
     }
+    setModoEdicao(false)
+    toast.success("Avaliação encerrada")
+    await atualizarCacheAvaliacao(id)
   }
 
   const inativarAvaliacao = async (id: string) => {
     try {
       await avaliacoesRequests.inativar(id)
-      if (materiaId) await invalidarArvore(materiaId)
-      await qc.invalidateQueries({ queryKey: queryKeys.avaliacoes.detalhe(id) })
-      toast.success("Avaliação inativada")
     } catch (e: unknown) {
       toast.error(e instanceof ApiError ? e.message : "Erro ao inativar")
+      return
     }
+    toast.success("Avaliação inativada")
+    await atualizarCacheAvaliacao(id)
   }
 
   const apagarAvaliacao = async (id: string) => {
     try {
       await avaliacoesRequests.apagar(id)
-      if (materiaId) await invalidarArvore(materiaId)
-      toast.success("Avaliação apagada permanentemente")
-      if (materiaId && conteudoId) {
-        router.push(`/avaliacoes/${materiaId}/${conteudoId}`)
-      }
     } catch (e: unknown) {
       toast.error(e instanceof ApiError ? e.message : "Erro ao apagar")
+      return
+    }
+    toast.success("Avaliação apagada permanentemente")
+    try {
+      if (materiaId) await invalidarArvore(materiaId)
+    } catch {
+      /* refetch de cache falhou; avaliação já foi apagada */
+    }
+    if (materiaId && conteudoId) {
+      router.push(`/avaliacoes/${materiaId}/${conteudoId}`)
     }
   }
 
