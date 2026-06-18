@@ -1,0 +1,4 @@
+# Variáveis de ambiente — contêm segredos (tokens, chaves). NÃO commitar.
+.env
+.env.*
+!.env.example
